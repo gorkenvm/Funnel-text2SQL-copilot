@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Phonak Funnel Copilot — synthetic data demo</title>
+<title>Funnel Copilot — synthetic data demo</title>
 <script src="./vendor/echarts.min.js"
         onerror="var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js';document.head.appendChild(s);"></script>
 <script src="./vendor/marked.min.js"></script>
@@ -1581,7 +1581,7 @@
       <button type="submit" id="demo-lock-submit" data-i18n="demoLockEnter">Enter</button>
     </form>
     <div class="demo-lock-error" id="demo-lock-error" role="alert" hidden></div>
-    <span class="footer-disclaimer demo-lock-disclaimer" data-i18n="footerDisclaimer">Independent case-study demo · synthetic data · not affiliated with Sonova or Phonak.</span>
+    <span class="footer-disclaimer demo-lock-disclaimer" data-i18n="footerDisclaimer">Independent portfolio demo · synthetic data · not affiliated with any hearing-care company.</span>
   </div>
 </div>
 
@@ -1589,11 +1589,11 @@
   <div class="brand">
     <!-- M10 §5: our own inline-SVG sound-bars mark — filled in by JS
          (eqBarsSvg) so the header and the chat "thinking" placeholder
-         share exactly one markup source. Never Phonak's or any third
-         party's icon asset. -->
+         share exactly one markup source. Never any third party's icon
+         asset — brand-free by design (M20). -->
     <span class="brand-mark eq-mark" id="brand-mark" aria-hidden="true"></span>
     <h1 class="brand-text">
-      <span class="brand-name" data-i18n="brandName">Phonak Funnel Copilot</span>
+      <span class="brand-name" data-i18n="brandName">Funnel Copilot</span>
       <span class="brand-demo" data-i18n="brandDemo">Demo</span>
     </h1>
     <span class="badge" data-i18n="badge">Synthetic data · Privacy-by-design demo</span>
@@ -1663,7 +1663,7 @@
 
 <footer id="footer">
   <span id="footer-status" data-i18n="footerLoading">Connecting…</span>
-  <span class="footer-disclaimer" data-i18n="footerDisclaimer">Independent case-study demo · synthetic data · not affiliated with Sonova or Phonak.</span>
+  <span class="footer-disclaimer" data-i18n="footerDisclaimer">Independent portfolio demo · synthetic data · not affiliated with any hearing-care company.</span>
 </footer>
 <div id="toast"></div>
 
@@ -1687,7 +1687,7 @@
   var LANG = "en";
   var I18N = {
     en: {
-      brandName: "Phonak Funnel Copilot",
+      brandName: "Funnel Copilot",
       brandDemo: "Demo",
       badge: "Synthetic data · Privacy-by-design demo",
       placeholder: "Ask about the funnel…",
@@ -1697,7 +1697,7 @@
       emptyState: "Ask a question or build the KPI dashboard to see charts here.",
       footerLoading: "Connecting…",
       footerTemplate: "Driver: {driver} · LLM: {llm} · Data through {ts}",
-      footerDisclaimer: "Independent case-study demo · synthetic data · not affiliated with Sonova or Phonak.",
+      footerDisclaimer: "Independent portfolio demo · synthetic data · not affiliated with any hearing-care company.",
       showSql: "Show SQL",
       hideSql: "Hide SQL",
       thinking: "Copilot is thinking…",
@@ -1759,7 +1759,7 @@
       themeToggleToDark: "Switch to dark theme",
       traceSummary: "{n} steps · {s}s",
       welcomeTitle: "What do you want to learn?",
-      welcomeSubtitle: "Ask anything about the synthetic Phonak hearing-aid funnel data — from drop-off points to channel attribution.",
+      welcomeSubtitle: "Ask anything about the synthetic hearing-aid funnel data — from drop-off points to channel attribution.",
       chips: [
         "Where is the biggest drop-off?",
         "Compare pairing rate iOS vs Android by market",
@@ -1788,7 +1788,7 @@
       demoLockRetry: "Too many attempts — please wait a moment and try again."
     },
     tr: {
-      brandName: "Phonak Funnel Copilot",
+      brandName: "Funnel Copilot",
       brandDemo: "Demo",
       badge: "Sentetik veri · Tasarımdan gizlilik demosu",
       placeholder: "Funnel hakkında bir şey sorun…",
@@ -1798,7 +1798,7 @@
       emptyState: "Grafikleri görmek için bir soru sorun ya da KPI kokpitini kurun.",
       footerLoading: "Bağlanıyor…",
       footerTemplate: "Sürücü: {driver} · LLM: {llm} · Veri son tarih {ts}",
-      footerDisclaimer: "Bağımsız vaka çalışması demosu · sentetik veri · Sonova veya Phonak ile bağlantılı değildir.",
+      footerDisclaimer: "Bağımsız portföy demosu · sentetik veri · herhangi bir işitme cihazı şirketiyle bağlantılı değildir.",
       showSql: "SQL'i göster",
       hideSql: "SQL'i gizle",
       thinking: "Copilot düşünüyor…",
@@ -1860,7 +1860,7 @@
       themeToggleToDark: "Koyu temaya geç",
       traceSummary: "{n} adım · {s}sn",
       welcomeTitle: "Ne öğrenmek istiyorsun?",
-      welcomeSubtitle: "Sentetik Phonak işitme cihazı funnel verisi hakkında her şeyi sorabilirsin — düşüş noktalarından kanal atfına kadar.",
+      welcomeSubtitle: "Sentetik işitme cihazı funnel verisi hakkında her şeyi sorabilirsin — düşüş noktalarından kanal atfına kadar.",
       chips: [
         "En büyük düşüş nerede?",
         "Pazara göre iOS ve Android eşleştirme oranını karşılaştır",

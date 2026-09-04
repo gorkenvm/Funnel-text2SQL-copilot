@@ -1,4 +1,4 @@
-M19 — Mobile layout bugs on the live phone (phonak.vmgorken.com): root causes + fixes
+M19 — Mobile layout bugs on the live phone (funnel.vmgorken.com): root causes + fixes
 ======================================================================================
 
 Bug report

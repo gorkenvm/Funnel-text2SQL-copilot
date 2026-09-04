@@ -1,4 +1,4 @@
-M2 TEST REPORT — Phonak Funnel Copilot web app
+M2 TEST REPORT — Funnel Copilot web app
 Generated: 2026-09-01 (session run)
 
 ================================ PYTEST (full suite) ================================
@@ -36,7 +36,7 @@ Server started with: PYTHONPATH=src uvicorn app.main:app --host 0.0.0.0 --port 8
 <head>
 <meta charset="utf-8" />
 ...
-<title>Phonak Funnel Copilot — synthetic data demo</title>
+<title>Funnel Copilot — synthetic data demo</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
 ...
 

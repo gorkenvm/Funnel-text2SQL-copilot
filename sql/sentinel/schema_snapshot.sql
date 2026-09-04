@@ -24,7 +24,7 @@
 -- the connection's own default catalog/schema so this reads the RAW layer
 -- (not a same-named bronze/silver/gold copy) on either engine — current_
 -- catalog()/current_schema() resolve to "memory"/"main" on DuckDB and to
--- DATABRICKS_CATALOG/DATABRICKS_SCHEMA (e.g. "workspace"/"sonova") on
+-- DATABRICKS_CATALOG/DATABRICKS_SCHEMA (e.g. "workspace"/"funnel") on
 -- Databricks, exactly where scripts/load_to_databricks.py put the raw
 -- tables before the medallion layers were built on top of them.
 SELECT

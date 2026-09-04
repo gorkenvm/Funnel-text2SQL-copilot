@@ -55,7 +55,7 @@ Screenshots (reports/m8_*.png):
 
   m8_empty_state_welcome.png
       Fresh page load, no messages sent yet. Centered "What do you want to
-      learn?" block with subtext mentioning the synthetic Phonak funnel
+      learn?" block with subtext mentioning the synthetic hearing-aid funnel
       data, and the chip set rendered as 6 larger suggestion cards. Chip
       row at top is untouched/unchanged.
 

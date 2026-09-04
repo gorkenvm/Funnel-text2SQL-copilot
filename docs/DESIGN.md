@@ -1,33 +1,36 @@
-# DESIGN.md — Phonak Funnel Copilot Design System
+# DESIGN.md — Funnel Copilot Design System
 
 Single source of truth for the demo UI. Agents implementing any frontend change
-read this first and treat it as the contract. Derived from live phonak.com
-computed styles (captured 2026-09-03); brand-INSPIRED, never brand-cloned.
+read this first and treat it as the contract. The palette and typography are
+drawn from contemporary hearing-care brand aesthetics in general — not
+derived from, or cloned from, any single company's live site — and are
+brand-INSPIRED, never brand-identifying.
 
 ## 0. Brand stance (non-negotiable)
 
-- Visual language may resemble phonak.com: palette family, typographic pairing,
-  flat/bordered component feel. It must NOT replicate trade dress: no Phonak
-  logo or wordmark asset, no cloned hero layouts, no copied imagery.
-- The footer always carries: "Independent case-study demo · synthetic data ·
-  not affiliated with Sonova or Phonak." The header keeps the synthetic-data badge.
-- Licensed fonts are substituted and the substitution is declared here:
-  Söhne → **Inter**, Teodor → **Fraunces**. Both self-hosted (vendored woff2),
-  system-stack fallbacks always present.
+- Visual language may resemble the broader hearing-care category: palette
+  family, typographic pairing, flat/bordered component feel. It must NOT
+  replicate any real company's trade dress: no logo or wordmark asset from
+  any real brand, no cloned hero layouts, no copied imagery.
+- The footer always carries: "Independent portfolio demo · synthetic data ·
+  not affiliated with any hearing-care company." The header keeps the
+  synthetic-data badge.
+- Typography uses **Inter** (UI) and **Fraunces** (display), both self-hosted
+  (vendored woff2), system-stack fallbacks always present.
 
 ## 1. Color tokens — UI
 
 | Token | Value | Use |
 |---|---|---|
-| --ink | #201F1C | primary text (live phonak body color) |
+| --ink | #201F1C | primary text (warm near-black) |
 | --ink-soft | #55534E | secondary text |
 | --ink-muted | #8A877F | tertiary/labels, timestamps, badges |
 | --surface | #FFFFFF | cards, panels |
-| --surface-alt | #F5F5F3 | page background (live phonak) |
+| --surface-alt | #F5F5F3 | page background (warm off-white) |
 | --surface-ink | #17231C | dark SQL blocks (green-cast near-black) |
 | --border | #E4E3DE | hairline borders |
 | --border-strong | #C9C7BF | inputs, emphasized dividers |
-| --action | #CFFB5E | primary CTA fill (live phonak lime) — ALWAYS with --ink text |
+| --action | #CFFB5E | primary CTA fill (signature lime) — ALWAYS with --ink text |
 | --action-hover | #C2F13F | CTA hover |
 | --accent | #154734 | deep green: links, active states, focus, selected segments |
 | --accent-soft | #E7F0EA | subtle green tint: chips, selected backgrounds, hovers |
@@ -108,9 +111,8 @@ Line-height 1.45 body, 1.2 display. Letter-spacing normal; micro-labels may use
 - Spacing on an 8px grid: 4 / 8 / 12 / 16 / 24 / 32. Panels pad 16, cards pad 16,
   dense rows 8. One rhythm — no ad-hoc values.
 - Radius: buttons & chips 8px; inputs 10px; cards & panels 16px; pills 999px.
-  (Live phonak: 8/10-16/30.)
-- Elevation: FLAT by default — hairline --border instead of shadows (live phonak
-  buttons have no shadow). Exactly one soft shadow token for floating layers
+- Elevation: FLAT by default — hairline --border instead of shadows (buttons
+  carry no shadow). Exactly one soft shadow token for floating layers
   (drawer, toasts): 0 8px 24px rgba(32,31,28,.10).
 
 ## 5. Components
@@ -141,11 +143,11 @@ Line-height 1.45 body, 1.2 display. Letter-spacing normal; micro-labels may use
   monospace table name in --ink 13px; COMMENT text (when present) below in
   --ink-muted 12px, Inter. Hover: --accent-soft.
 - **Stat tile**: Fraunces 34px value in --ink, label --ink-muted.
-- **Brand lockup (header)**: sound-bars mark + "Phonak Funnel Copilot" in
+- **Brand lockup (header)**: sound-bars mark + "Funnel Copilot" in
   Fraunces 600 20px + a lighter "Demo" word in --ink-soft. The synthetic-data
   badge stays but compact (micro text, single pill). The mark is OUR OWN inline
   SVG — 5 vertical rounded bars of varying height (a generic audio/equalizer
-  glyph, drawn from scratch; never Phonak's or anyone's icon asset), bars in
+  glyph, drawn from scratch; never any real brand's icon asset), bars in
   --accent with the center bar --action-darkened #9CC23F in light /
   --action in dark. Size 22×22 in header.
 - **Thinking animation**: the SAME sound-bars mark, animated — while an answer

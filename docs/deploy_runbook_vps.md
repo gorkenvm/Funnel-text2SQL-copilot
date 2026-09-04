@@ -1,6 +1,6 @@
 # VPS Prodüksiyon Dağıtım Runbook'u (M18)
 
-Bu runbook, Phonak Funnel Copilot'u kendi VPS'inize (`ssh vps` ile
+Bu runbook, Funnel Copilot'u kendi VPS'inize (`ssh vps` ile
 eriştiğiniz makine) dağıtmak için baştan sona, kopyala-yapıştır
 çalıştırılabilir talimatlar içerir. Hedef: **funnel.vmgorken.com**
 (Cloudflare Tunnel üzerinden). Bu ajan VPS'e SSH ile erişemiyor — aşağıdaki
@@ -67,7 +67,7 @@ AGENT_DB=duckdb
 # DATABRICKS_HTTP_PATH=
 # DATABRICKS_TOKEN=
 # DATABRICKS_CATALOG=workspace
-# DATABRICKS_SCHEMA=sonova
+# DATABRICKS_SCHEMA=funnel
 EOF
 
 chmod 600 .env
@@ -134,6 +134,24 @@ her zaman ayrı bir volume'dur (Bölüm 3).
 
 ---
 
+> **M20 göç notu (marka arındırma: hostname + container adı değişti).**
+> Zaten `phonak.vmgorken.com` üzerinde çalışan bir VPS kurulumunuz varsa,
+> yeni hostname'e (`funnel.vmgorken.com`) ve — override dosyanızda bir
+> `container_name: phonak_copilot` ayarladıysanız — yeni container adına
+> (`funnel_copilot`) geçmek için:
+> 1. `docker compose down` (mevcut container'ı durdurun),
+> 2. compose override dosyanızdaki `container_name` değerini
+>    `phonak_copilot` → `funnel_copilot` olacak şekilde güncelleyin
+>    (override yoksa, ya da varsayılan compose servis adını
+>    kullanıyorsanız — bu repo'nun kendi `docker-compose.yml`'i artık
+>    `funnel-copilot` servis adını kullanır — bu adımı atlayın),
+> 3. `docker compose up -d` (yeni adla yeniden başlatın),
+> 4. Cloudflare Tunnel rotanızı aşağıdaki §4'e göre güncelleyin: hostname
+>    `funnel.vmgorken.com` olacak ve (container-mod tünel kullanıyorsanız)
+>    Public Hostname URL'i yeni container adını (`http://funnel_copilot:8000`)
+>    göstermeli. Eski `phonak.vmgorken.com` rotasını Cloudflare
+>    panelinden silmeyi unutmayın.
+
 ## 4. Cloudflare Tunnel: `funnel.vmgorken.com` rotası
 
 ### 4.1 `cloudflared` kurulumu (yoksa)
@@ -153,9 +171,9 @@ tamamen farklı:
   `--token ...` argümanıyla (genelde bir container olarak) çalışıyorsa
   `config.yml` OKUNMAZ; 4.3'ü atlayın. Rota Cloudflare **Zero Trust →
   Networks → Tunnels → tüneliniz → Public Hostname / Published
-  application → Add** ekranından eklenir: Subdomain `phonak`, Domain
+  application → Add** ekranından eklenir: Subdomain `copilot`, Domain
   `vmgorken.com`, Service Type `HTTP`, URL = **uygulama container'ının
-  adı**, ör. `http://phonak_copilot:8000` (cloudflared da bir container
+  adı**, ör. `http://funnel_copilot:8000` (cloudflared da bir container
   olduğundan `localhost` ONUN kendi localhost'udur, host'a gitmez —
   uygulama container'ı cloudflared ile aynı docker ağına eklenmiş
   olmalı). DNS kaydı bu ekrandan otomatik oluşur; 4.4 gerekmez.
@@ -171,7 +189,7 @@ tamamen farklı:
 
 ```bash
 cloudflared tunnel login
-cloudflared tunnel create phonak-funnel-copilot
+cloudflared tunnel create funnel-copilot
 ```
 
 Bu komut `~/.cloudflared/<TUNNEL_ID>.json` kimlik dosyasını üretir ve
@@ -191,7 +209,7 @@ ingress:
   - hostname: funnel.vmgorken.com
     # cloudflared HOST üzerinde çalışıyorsa localhost doğrudur;
     # bir CONTAINER olarak çalışıyorsa uygulama container'ının adını
-    # kullanın (http://phonak_copilot:8000) ve iki container'ı aynı
+    # kullanın (http://funnel_copilot:8000) ve iki container'ı aynı
     # docker ağına koyun.
     service: http://localhost:8000
   # ... vmgorken.com için zaten var olan diğer ingress kurallarınız ...

@@ -111,10 +111,11 @@ defined but unused, reserved for a future heat/magnitude chart per §2.
 --------------------------------------
 Added the mandatory line, in both languages, alongside the existing
 driver/LLM/tier line (kept verbatim):
-  EN: "Independent case-study demo · synthetic data · not affiliated with
-       Sonova or Phonak."
-  TR: "Bağımsız vaka çalışması demosu · sentetik veri · Sonova veya Phonak
-       ile bağlantılı değildir."
+  EN: "Independent portfolio demo · synthetic data · not affiliated with
+       any hearing-care company."
+  TR: "Bağımsız portföy demosu · sentetik veri · herhangi bir işitme
+       cihazı şirketiyle bağlantılı değildir." (M20: wording updated
+       during the de-branding sweep — see reports/m20_test_report.txt.)
 New i18n key `footerDisclaimer` added to both `I18N.en` and `I18N.tr`; no
 existing i18n key was renamed. The footer element was split into two
 <span>s (#footer-status keeps the old id's JS wiring under a new id,
@@ -197,7 +198,7 @@ footer <span> split, so this was mainly a confirmation pass):
 -----------------------------------------------
   1. Brand <h1> font: §3's display-role list enumerates "welcome title,
      hero/stat numbers, card titles, section headers" — the page's own
-     brand lockup ("Phonak Funnel Copilot — ...") isn't named. Kept it in
+     brand lockup ("Funnel Copilot — ...") isn't named. Kept it in
      Inter 700 rather than Fraunces, both because it's not on the list and
      because §0 already warns against anything that reads as a copied
      wordmark/logo treatment.

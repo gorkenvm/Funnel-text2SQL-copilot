@@ -13,7 +13,7 @@
 -- holds the three raw tables (web_events, app_events, id_bridge) BEFORE this
 -- file runs. It resolves to:
 --   * "main"                          on DuckDB (where the parquet views live)
---   * <DATABRICKS_SCHEMA> (e.g. "sonova") on Databricks, under the connection's
+--   * <DATABRICKS_SCHEMA> (e.g. "funnel") on Databricks, under the connection's
 --                                       default catalog (e.g. "workspace")
 -- Every other identifier here is bare (schema.table, no catalog) so it
 -- resolves under whatever catalog the calling connection defaults to —

@@ -1,6 +1,6 @@
 # M2 API Contract
 
-This is the frontend-facing contract for the Phonak Funnel Copilot web app
+This is the frontend-facing contract for the Funnel Copilot web app
 (module M2). **Any future frontend (web, mobile, embedded widget) should
 depend only on this contract**, not on internals of `app/main.py` or the
 M1 agent package.

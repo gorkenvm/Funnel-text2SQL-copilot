@@ -1,4 +1,4 @@
-# Compose file for the Phonak Funnel Copilot production deploy.
+# Compose file for the Funnel Copilot production deploy.
 #
 # Usage:
 #   1) one-time (or whenever you want fresh synthetic data):
@@ -19,7 +19,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: phonak-funnel-copilot:latest
+    image: funnel-copilot:latest
     env_file: .env
     ports:
       # Bound to loopback only — the public hostname is reached through
@@ -41,7 +41,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: phonak-funnel-copilot:latest
+    image: funnel-copilot:latest
     # Overrides the image's non-root USER: a bind-mounted host ./data may
     # not be writable by the image's fixed appuser UID, and this container
     # is short-lived and never network-facing, so root here costs nothing

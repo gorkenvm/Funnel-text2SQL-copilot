@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Funnel Copilot — VPS deploy, phase 1 (app only; tunnel wiring is phase 2).
-# Run FROM YOUR PC:  Get-Content C:\dev\sonova\scripts\deploy_remote.sh -Raw | ssh vps "bash -s"
+# Run FROM YOUR PC:  Get-Content C:\dev\funnel-copilot\scripts\deploy_remote.sh -Raw | ssh vps "bash -s"
 # Idempotent: safe to re-run. Never prints secret values.
 set -u
 
@@ -67,4 +67,4 @@ docker inspect cloudflared --format 'Mounts: {{range .Mounts}}{{.Source}} -> {{.
 docker inspect cloudflared --format 'Cmd: {{join .Config.Cmd " "}}' 2>/dev/null
 echo
 echo "PHASE 1 DONE: app is up on 127.0.0.1:8000 (locked: check the health JSON above)."
-echo "Paste this whole output back; phase 2 (phonak.vmgorken.com wiring) depends on it."
+echo "Paste this whole output back; phase 2 (funnel.vmgorken.com wiring) depends on it."

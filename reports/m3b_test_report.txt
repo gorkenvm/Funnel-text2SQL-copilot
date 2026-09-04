@@ -31,7 +31,7 @@ PYTEST OUTPUT (full verbose run, 133 tests = 107 pre-existing + 26 new)
 ============================= test session starts ==============================
 platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- /usr/bin/python3
 cachedir: .pytest_cache
-rootdir: /home/claude/work/sonova_case
+rootdir: /home/claude/work/funnel_copilot
 plugins: anyio-4.13.0
 collecting ... collected 133 items
 
@@ -62,7 +62,7 @@ tests/test_databricks_loader.py::TestRunWithMockedConnection::test_connection_fa
 tests/test_databricks_loader.py::TestRunWithMockedConnection::test_turkish_hint_for_permission_error PASSED
 tests/test_databricks_loader.py::TestRunWithMockedConnection::test_turkish_hint_for_warehouse_not_found PASSED
 tests/test_databricks_loader.py::TestRunWithMockedConnection::test_turkish_hint_for_hostname_error PASSED
-tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema::test_defaults_workspace_and_sonova_when_unset PASSED
+tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema::test_defaults_workspace_and_funnel_when_unset PASSED
 tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema::test_passes_explicit_catalog_and_schema_from_env PASSED
 tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema::test_missing_required_env_raises_before_importing_connector PASSED
 tests/test_databricks_loader.py::TestSystemPromptMarkdownGuidance::test_prompt_forbids_markdown_tables_and_headings PASSED
@@ -104,7 +104,7 @@ TestRunWithMockedConnection            6 tests  - run() end-to-end against a
                                                   likely failure modes
 TestDatabricksDriverCatalogSchema      3 tests  - DatabricksDriver passes
                                                   catalog="workspace"/
-                                                  schema="sonova" by default
+                                                  schema="funnel" by default
                                                   and honours
                                                   DATABRICKS_CATALOG/SCHEMA
                                                   overrides, via a fake
@@ -193,7 +193,7 @@ DEVIATIONS FROM THE TASK SPEC (with reasons)
    confirmed it was present.
 2. docker-compose.yml was updated (not explicitly requested) to also pass
    DATABRICKS_CATALOG / DATABRICKS_SCHEMA through to the container
-   environment (defaulting to workspace/sonova), so a Docker Compose
+   environment (defaulting to workspace/funnel), so a Docker Compose
    deployment stays correct now that DatabricksDriver reads those two vars
    — otherwise a user who only edits .env would see docker compose runs
    silently ignore a custom catalog/schema.

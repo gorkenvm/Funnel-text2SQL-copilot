@@ -25,7 +25,7 @@ PER-FEATURE NOTES
      (#9CC23F light / var(--action) dark per §5). Rendered at 22px in the
      header (`#brand-mark`) and 16px inline wherever the "thinking"
      placeholder shows (see point 7).
-   - h1 now reads "Phonak Funnel Copilot" (Fraunces 600, 20px) + a lighter
+   - h1 now reads "Funnel Copilot" (Fraunces 600, 20px) + a lighter
      "Demo" word (--ink-soft). New i18n keys `brandName`/`brandDemo`
      replace the old single `brandTitle` string (identical in EN/TR since
      both are proper-noun/short common words).

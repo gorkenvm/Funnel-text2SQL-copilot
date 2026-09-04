@@ -23,7 +23,7 @@ PYTEST OUTPUT (full verbose run, 107 tests, 60 pre-existing + 47 new)
 ============================= test session starts ==============================
 platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- /usr/bin/python3
 cachedir: .pytest_cache
-rootdir: /home/claude/work/sonova_case
+rootdir: /home/claude/work/funnel_copilot
 plugins: anyio-4.13.0
 collecting ... collected 107 items
 

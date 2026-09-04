@@ -1,12 +1,12 @@
 # M2 Dağıtım Rehberi (Türkçe)
 
-Bu rehber, Phonak Funnel Copilot web uygulamasını (M2) sıfırdan ayağa
+Bu rehber, Funnel Copilot web uygulamasını (M2) sıfırdan ayağa
 kaldırmak için adım adım, kopyala-yapıştır çalıştırılabilir talimatlar
 içerir. Sırasıyla: lokal çalıştırma, Docker ile çalıştırma, Cloudflare
 Tunnel ile `funnel.vmgorken.com` adresine bağlama, `ANTHROPIC_API_KEY`
 verme ve Databricks'e geçiş.
 
-Tüm komutlar repo kök dizininden (`sonova_case/`) çalıştırılmalıdır.
+Tüm komutlar repo kök dizininden (`funnel_copilot/`) çalıştırılmalıdır.
 
 > **M18 notu:** Gerçek VPS prodüksiyon dağıtımı (kullanıcının kendi
 > makinesinden `ssh vps` ile uyguladığı, Cloudflare Tunnel ile
@@ -59,12 +59,12 @@ TR anlatı çevirisi (bkz. Bölüm 4) uygulanmaz.
 ### 2.1 Sadece Docker (compose'suz)
 
 ```bash
-docker build -t phonak-funnel-copilot:latest .
+docker build -t funnel-copilot:latest .
 
 docker run --rm -p 8000:8000 \
   -v "$(pwd)/data:/app/data:ro" \
   -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
-  phonak-funnel-copilot:latest
+  funnel-copilot:latest
 ```
 
 ### 2.2 docker compose (önerilen)
@@ -112,7 +112,7 @@ brew install cloudflare/cloudflare/cloudflared
 
 ```bash
 cloudflared tunnel login
-cloudflared tunnel create phonak-funnel-copilot
+cloudflared tunnel create funnel-copilot
 ```
 
 Bu komut `~/.cloudflared/<TUNNEL_ID>.json` kimlik dosyasını üretir ve
@@ -141,10 +141,10 @@ makinede çalışıyorsa `http://localhost:8000` doğru hedeftir (port
 ### 3.4 DNS rotasını bağlama ve tüneli başlatma
 
 ```bash
-cloudflared tunnel route dns phonak-funnel-copilot funnel.vmgorken.com
+cloudflared tunnel route dns funnel-copilot funnel.vmgorken.com
 
 # ön planda test için:
-cloudflared tunnel run phonak-funnel-copilot
+cloudflared tunnel run funnel-copilot
 
 # kalıcı servis olarak (systemd) kurmak için:
 sudo cloudflared service install
@@ -189,13 +189,13 @@ docker compose up --build
 **c) Sistem servisi (systemd) için `EnvironmentFile`:**
 
 ```ini
-# /etc/phonak-funnel-copilot.env (izinleri 600 yapın)
+# /etc/funnel-copilot.env (izinleri 600 yapın)
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
 ```
 
 ```ini
 # systemd unit dosyasında:
-EnvironmentFile=/etc/phonak-funnel-copilot.env
+EnvironmentFile=/etc/funnel-copilot.env
 ```
 
 `ANTHROPIC_API_KEY` tanımlandığında `/health` uç noktası `"llm": "anthropic"`
@@ -247,7 +247,7 @@ Warehouse" hazır gelir; ek bir warehouse oluşturmanıza gerek yoktur.
    gidin.
 2. **Access tokens** bölümünde **Manage** → **Generate new token**'a
    tıklayın.
-3. Bir açıklama girin (ör. `sonova-funnel-copilot`) ve isteğe bağlı bir
+3. Bir açıklama girin (ör. `funnel-copilot`) ve isteğe bağlı bir
    son kullanma tarihi seçin, **Generate**'e basın.
 4. Gösterilen token'ı (`dapi...` ile başlar) hemen kopyalayın — bu
    ekran kapandıktan sonra bir daha görüntülenemez. Bu token `.env`'de
@@ -267,14 +267,26 @@ DATABRICKS_SERVER_HOSTNAME=dbc-a1b2c3d4-e5f6.cloud.databricks.com
 DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/a1b2c3d4e5f6g7h8
 DATABRICKS_TOKEN=dapixxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 DATABRICKS_CATALOG=workspace
-DATABRICKS_SCHEMA=sonova
+DATABRICKS_SCHEMA=funnel
 EOF
 ```
 
 `DATABRICKS_CATALOG` ve `DATABRICKS_SCHEMA` opsiyoneldir — atlarsanız
-sırasıyla `workspace` ve `sonova` varsayılanları kullanılır. Free
+sırasıyla `workspace` ve `funnel` varsayılanları kullanılır. Free
 Edition workspace'lerinde varsayılan katalog adı genelde `workspace`
 olduğundan çoğu kurulumda bu iki satırı hiç eklemenize gerek yoktur.
+
+> **M20 göç notu (varsayılan şema `sonova` → `funnel`):** Bu rehberin
+> önceki sürümünde varsayılan şema adı `sonova` idi (M20'de marka arındırma
+> sweep'i ile `funnel` oldu). **Daha önce `sonova` şemasına veri yüklediyseniz
+> veriniz hâlâ oradadır — kod değişikliği onu taşımaz.** İki seçeneğiniz var:
+> 1. Mevcut veriyi koruyun: kendi özel `.env` dosyanıza açıkça
+>    `DATABRICKS_SCHEMA=sonova` satırını ekleyin (env-override yolu hâlâ
+>    çalışır, hiçbir şeyi kırmaz), **veya**
+> 2. Yeni varsayılana geçin: `scripts/load_to_databricks.py`'yi tekrar
+>    çalıştırarak veriyi yeni `funnel` şemasına yükleyin.
+> `AGENT_DB=duckdb` (varsayılan) kullanan kurulumlar bundan hiç etkilenmez —
+> bu not yalnızca `AGENT_DB=databricks` kullananlar içindir.
 
 `AGENT_DB=databricks` satırını **henüz eklemeyin** — önce veriyi
 yükleyip doğrulayacağız (Bölüm 5.6), uygulama o ana kadar lokal
@@ -393,7 +405,7 @@ curl -s http://localhost:8000/health | python3 -m json.tool
 ```
 
 `agent.db.DatabricksDriver`, bağlantıyı `DATABRICKS_CATALOG`/
-`DATABRICKS_SCHEMA` ile açar (varsayılan `workspace`/`sonova`), böylece
+`DATABRICKS_SCHEMA` ile açar (varsayılan `workspace`/`funnel`), böylece
 agent'ın kullandığı `web_events`, `app_events`, `id_bridge` gibi
 niteliksiz (şemasız) tablo adları ve M3c'nin `bronze.*`/`silver.*`/
 `gold.*` nesneleri aynı bağlantının varsayılan katalog'u altında
@@ -423,7 +435,7 @@ versiyonlanmış SQL dosyasından** (`sql/medallion.sql`) inşa edilen
 bronze/silver/gold katmanlarını okuyor. Bu dosya DuckDB'de ve
 Databricks'te **birebir aynı** çalışır — tek fark `{{raw}}` şablon
 değişkeninin neye eşitlendiği (DuckDB'de `"main"`, Databricks'te
-`load_to_databricks.py`'nin verdiği şema, ör. `sonova`).
+`load_to_databricks.py`'nin verdiği şema, ör. `funnel`).
 
 ### 6.1 Katmanlar ne tutuyor
 
@@ -541,9 +553,9 @@ bağımsız, ayrı bir kurulum adımı):
 2. Bu repository'nin Git URL'ini girin (veya "existing repository" olarak
    zaten klonlanmışsa o yolu kullanın).
 3. Klonlanan yolu not edin — genelde
-   `/Workspace/Repos/<kullanıcı-e-postası>/sonova_case` biçimindedir.
+   `/Workspace/Repos/<kullanıcı-e-postası>/funnel_copilot` biçimindedir.
    Notebook'un `repo_root` widget'ı bu yolu bekler (varsayılanı
-   `/Workspace/Repos/sonova_case` — kendi klon yolunuz farklıysa Job
+   `/Workspace/Repos/funnel_copilot` — kendi klon yolunuz farklıysa Job
    parametresi olarak değiştirin, bkz. 7.3).
 
 Not: repo bir Databricks Repo olarak bağlı değilse notebook otomatik
@@ -588,7 +600,7 @@ registry = sc.build_registry(driver)
 6. **Parameters** (widget değerleri, hepsi opsiyonel — boş bırakılırsa
    notebook içindeki varsayılanlar geçerli olur):
    - `catalog` → `workspace` (veya `DATABRICKS_CATALOG` neyse)
-   - `schema` → `sonova` (veya `DATABRICKS_SCHEMA` neyse)
+   - `schema` → `funnel` (veya `DATABRICKS_SCHEMA` neyse)
    - `as_of` → boş bırakın (otomatik: olgun maksimum tarih, bkz.
      `docs/sentinel_design.md`'deki "maturity buffer" açıklaması)
    - `repo_root` → repo'nun gerçek Databricks Repo yolu (Bölüm 7.1)

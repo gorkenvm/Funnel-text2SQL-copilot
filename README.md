@@ -4,7 +4,7 @@
 medallion architecture, self-corrects, and answers with the right chart → or builds a
 live, filtered KPI dashboard from one sentence.**
 
-> *Independent case-study demo · synthetic data · not affiliated with Sonova or Phonak.*
+> *Independent portfolio demo · synthetic data · not affiliated with any hearing-care company.*
 
 ![Filtered dashboard from one sentence](reports/m11_dashboard_germany_light.png)
 

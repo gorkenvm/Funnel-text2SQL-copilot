@@ -1,4 +1,4 @@
-# Phonak Funnel Copilot — production web application image.
+# Funnel Copilot — production web application image.
 #
 # Data is NOT baked into the image: mount ./data as a volume at /app/data
 # (see docker-compose.yml; ../data is generated separately via

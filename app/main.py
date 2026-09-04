@@ -135,7 +135,7 @@ def _agentic_agent_for_tier(tier: Optional[str]) -> Optional[AgenticFunnelAgent]
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(
-    title="Phonak Funnel Copilot API",
+    title="Funnel Copilot API",
     description="Synthetic-data demo API over the ask-the-funnel agent (M1).",
     version="1.0.0",
 )

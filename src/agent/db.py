@@ -93,7 +93,7 @@ class DuckDBDriver(BaseDriver):
 #: to Databricks. Overridable via DATABRICKS_CATALOG / DATABRICKS_SCHEMA so
 #: they always match what scripts/load_to_databricks.py created.
 DEFAULT_DATABRICKS_CATALOG = "workspace"
-DEFAULT_DATABRICKS_SCHEMA = "sonova"
+DEFAULT_DATABRICKS_SCHEMA = "funnel"
 
 
 class DatabricksDriver(BaseDriver):
@@ -105,7 +105,7 @@ class DatabricksDriver(BaseDriver):
     * ``DATABRICKS_HTTP_PATH``
     * ``DATABRICKS_TOKEN``
     * ``DATABRICKS_CATALOG`` (optional, default ``"workspace"``)
-    * ``DATABRICKS_SCHEMA`` (optional, default ``"sonova"``)
+    * ``DATABRICKS_SCHEMA`` (optional, default ``"funnel"``)
 
     The ``databricks`` package is imported lazily inside ``__init__`` so
     that installing it is only required when this driver is actually used.

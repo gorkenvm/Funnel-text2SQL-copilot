@@ -1,5 +1,5 @@
 """
-Synthetic data generator — Sonova Digital Data Analyst case.
+Synthetic data generator — hearing-care funnel demo case.
 
 Produces three tables mirroring the case schema:
   web_events(user_pseudo_id, session_id, event_name, event_timestamp, page_location,
@@ -207,8 +207,8 @@ def web(mask, pseudo, sess_suffix, name, ts, utm_col="utm"):
         session_id=[f"{p}_{s}" for p, s in zip(ps, np.full(mask.sum(), sess_suffix))],
         event_name=name,
         event_timestamp=d[ts] if isinstance(ts, str) else ts[mask],
-        page_location=np.where(d[utm_col].isna(), "https://www.phonak.com/hearing-test",
-            "https://www.phonak.com/hearing-test?utm_campaign=" + d[utm_col].fillna("")),
+        page_location=np.where(d[utm_col].isna(), "https://www.example-hearingcare.com/hearing-test",
+            "https://www.example-hearingcare.com/hearing-test?utm_campaign=" + d[utm_col].fillna("")),
         utm_campaign=d[utm_col], device_category=d["device"], country=d["market"],
         consent_state=d["consent_state"], _true_user=d["user_id"])))
 

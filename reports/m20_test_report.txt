@@ -1,0 +1,197 @@
+M20 — Full de-branding sweep to the new "Funnel Copilot" identity
+====================================================================
+
+Trigger
+-------
+User-approved, urgent: an insider reviewer flagged that using the real
+hearing-aid brand name publicly is unwise. New identity, on purpose
+brand-free (no invented replacement brand): product name "Funnel Copilot",
+subtitle/scenario wording "hearing-care funnel demo" / "synthetic
+hearing-aid funnel", public hostname funnel.vmgorken.com (replaces the
+old brand-named subdomain).
+
+Note on this report's own wording: since reports/*.txt is itself inside
+the swept, grep-checked tree, this report deliberately avoids repeating
+the two retired brand words themselves (it refers to "the old brand name",
+"the old hostname", "the old schema value", etc. instead) so it does not
+undo its own sweep. The two files that legitimately still need to spell
+out an old literal value — so an existing user can find and act on it —
+are named below under "Deliberate exceptions", with the reasoning.
+
+Method
+------
+grep -ri for the two retired brand words across the repo-visible tree,
+excluding the gitignored internal-only files the coordinator named
+(docs/PROJECT_STATE.md, docs/sunum_altin_notlari.md, docs/demo_qa_log.md,
+docs/m1_rapor.md, .env, apikey.md) — left untouched, exactly as instructed.
+Every other hit was fixed. Zero visual/token change: colors and
+typography values are untouched; this is a naming/wording sweep only.
+
+Hit count
+---------
+Before (public scope, excluding .git/__pycache__/.pytest_cache/
+data-parquet/gitignored-internal files, case-insensitive on both retired
+words): 123 hits across 27 files.
+
+After: 8 hits across 2 files, both deliberate migration-note exceptions
+(see below) — everywhere else in the public tree: 0 hits. (This report
+file itself also produces a small number of hits solely from the two
+words "hostname"/"schema" appearing near the word "value" — no, in fact
+it produces 0, since it never spells out the retired words themselves.)
+
+Files changed (28)
+------------------
+1.  app/static/index.html — <title>; brand-mark comment; brand-name text
+    (EN+TR); footer disclaimer (EN+TR, both the live-DOM span and the
+    demo-lock-overlay span) -> new wording; welcomeSubtitle (EN+TR) ->
+    "synthetic hearing-aid funnel data" (old brand word dropped).
+2.  app/main.py — FastAPI `title` -> "Funnel Copilot API"; CORS
+    allow_origins entry -> the new hostname.
+3.  README.md — disclaimer line -> new wording (title was already
+    "Funnel Copilot", untouched).
+4.  docs/DESIGN.md — title -> "Funnel Copilot Design System"; §0
+    rewritten brand-free (no more claim of deriving from a live real
+    company's site — now "drawn from contemporary hearing-care brand
+    aesthetics in general ... not derived from ... any single company's
+    live site"); removed the explicit named-font substitution provenance
+    (kept the actual fonts used, Inter/Fraunces, without naming which
+    licensed fonts they stand in for); removed old-brand annotations from
+    the color-token table and the radius/elevation notes (the tokens'
+    hex/px VALUES themselves are unchanged); brand lockup section and
+    disclaimer text updated to match.
+5.  docs/api_contract.md — title mention -> "Funnel Copilot".
+6.  docs/architecture.md — title -> "Funnel Copilot".
+7.  docs/architecture_view.html — <h1> -> "Funnel Copilot — Sistem
+    Mimarisi".
+8.  docs/deploy_guide.md (25 hits) — every old-brand product-name mention
+    -> "Funnel Copilot"; every old hostname -> the new one; the old
+    Docker image/tunnel name -> "funnel-copilot"; the old repo-root-name
+    references in prose/paths -> "funnel_copilot"; the DATABRICKS_SCHEMA
+    default (all 5 occurrences, including the Databricks Repos path
+    example and the Job `schema` parameter walkthrough) -> "funnel".
+    Added a prominent M20 migration-note callout right after the schema
+    explanation — see "Migration notes" below.
+9.  docs/deploy_runbook_vps.md (15 hits) — same product-name/hostname/
+    image-name fixes as above; the example container name throughout the
+    Cloudflare "container-mode tunnel" walkthrough and the config.yml
+    ingress-rule comment -> "funnel_copilot"; the Cloudflare subdomain
+    example -> "copilot"; the commented-out DATABRICKS_SCHEMA example ->
+    "funnel". Added a prominent M20 migration-note callout right before
+    §4 (Cloudflare Tunnel) — see "Migration notes" below.
+10. docker-compose.yml — header comment -> "Funnel Copilot"; both
+    `image:` lines -> "funnel-copilot:latest" (the service name was
+    already "funnel-copilot", untouched).
+11. Dockerfile — header comment -> "Funnel Copilot".
+12. scripts/deploy_remote.sh — example local checkout path updated to the
+    new project slug; the closing echo's hostname reference -> the new
+    hostname.
+13. src/agent/db.py — `DEFAULT_DATABRICKS_SCHEMA` default value and its
+    docstring mention -> "funnel".
+14. src/agent/README.md — `DATABRICKS_SCHEMA` default column -> "funnel".
+15. src/generate_data.py — module docstring's case-name mention ->
+    "hearing-care funnel demo case"; the synthetic `page_location` URLs
+    generated into the demo data -> a clearly-fake
+    "https://www.example-hearingcare.com/hearing-test..." domain (this
+    value only ever appears inside generated synthetic event data / raw
+    "Show data" tables, never asserted verbatim by any test).
+16. sql/medallion.sql — comment's DATABRICKS_SCHEMA example -> "funnel".
+17. sql/sentinel/schema_snapshot.sql — same example fix.
+18. notebooks/sentinel_job.ipynb — `schema` widget default -> "funnel";
+    example Databricks Repos path -> the new project slug. Re-validated
+    as parseable JSON after editing.
+19. tests/test_databricks_loader.py (13 hits) — every literal old-schema
+    fixture/assertion value -> "funnel" (including one test method name,
+    and one override-value test's custom string). Purely a rename of
+    stand-in fixture strings; no behavior asserted about the retired word
+    itself, so nothing about test intent changed.
+20. field_guide.html — demo URL link+text -> the new hostname; footer
+    disclaimer -> new wording. Visual design untouched.
+21-27. reports/m2_test_report.txt, m3a_test_report.txt, m3b_test_report.txt,
+    m8_test_report.txt, m9_test_report.txt, m10_test_report.txt,
+    m19_test_report.txt — historical retrospective reports swept per
+    instruction ("reports/*.txt — sweep all"): old product-name mentions
+    -> "Funnel Copilot"; pytest rootdir path mentions -> the new project
+    slug; the m3b Databricks-schema test excerpts (schema name, test name)
+    updated to match the renamed test; m8's scenario-description phrase ->
+    "synthetic hearing-aid funnel"; m9's quoted footer-disclaimer text
+    (EN+TR) -> new wording, with a note that the wording changed in M20;
+    m19's hostname mention -> the new hostname.
+28. reports/m20_test_report.txt — this file (new).
+
+Files checked and found already brand-neutral (no change needed)
+------------------------------------------------------------------
+docs/knowledge/attribution.md, insights.md, methodology.md, privacy.md —
+no hits on either retired word, and no indirect brand-identifying
+phrasing either (their few uses of the generic word "brand" are already
+neutral, e.g. consumer trust in "the brand" in the abstract, or the
+`paid_search_brand` channel-naming convention) — left as-is.
+docs/tracking_spec.md, docs/sentinel_design.md — no hits.
+scripts/load_to_databricks.py — no hits (imports the schema default from
+src/agent/db.py, already fixed there).
+
+Deliberate exceptions (8 remaining hits — flagged, not missed)
+-----------------------------------------------------------------
+Two files still spell out an old literal value, on purpose, inside a
+migration note aimed at an existing user — this is in direct, acknowledged
+tension with the "final grep must return zero hits" acceptance line, and I
+resolved it in favor of the note being actually useful: silently hiding
+the old value would make the note useless (a user would not know what
+string to look for in their own environment/override file).
+
+  - docs/deploy_guide.md (4 hits): the DATABRICKS_SCHEMA migration note
+    names the old schema default explicitly, and gives the exact env-var
+    line an existing user would add to their private .env to keep reading
+    their existing data — exactly what the coordinator's own instructions
+    asked this note to say.
+  - docs/deploy_runbook_vps.md (4 hits): the new VPS migration callout
+    (added per the coordinator's explicit ask for a container-name
+    migration note) names the old hostname and old example container name
+    so a reader can find and update their own compose override and
+    Cloudflare route.
+
+Recommend the coordinator/user decide whether these 8 historical-value
+mentions inside migration notes are an acceptable permanent, narrow
+exception (my recommendation) or whether the exact old values should
+instead live only in a private/internal note. I did not unilaterally
+choose the latter since it would make the guides materially less useful
+to the one audience — an existing deployer — who actually needs them.
+
+Migration notes (for the user)
+-------------------------------
+1. VPS deploy (hostname + container name): if the app is currently live
+   under the old brand-named subdomain, per deploy_runbook_vps.md's new
+   M20 callout:
+     a. `docker compose down`
+     b. if your compose override sets an explicit old-named
+        `container_name`, change it to `funnel_copilot` (this repo's own
+        docker-compose.yml already uses the service name "funnel-copilot",
+        unaffected)
+     c. `docker compose up -d`
+     d. update the Cloudflare Tunnel route: hostname -> funnel.vmgorken.com,
+        and (container-mode tunnels only) the Public Hostname target URL ->
+        http://funnel_copilot:8000; remove the old route from the
+        Cloudflare panel once the new one is confirmed working.
+2. Databricks schema (default renamed to "funnel"): if you have EXISTING
+   data loaded under the old default schema name, the code change does not
+   move it. Two options (documented in deploy_guide.md):
+     a. Keep using your existing data: add the old schema name explicitly
+        as `DATABRICKS_SCHEMA=...` to your private .env (the env-override
+        path still works, unchanged) — see deploy_guide.md's migration
+        note for the exact value, OR
+     b. Move to the new default: re-run `scripts/load_to_databricks.py` to
+        load into the new "funnel" schema.
+   Installs on the default `AGENT_DB=duckdb` driver are unaffected.
+
+Validation
+----------
+- pytest: 433 passed (same count as before M20 — no test asserted the old
+  disclaimer/CORS/schema strings in a way that broke; test_databricks_
+  loader.py's own fixture strings were proactively renamed to match).
+- Booted the app (AGENT_DB=duckdb, AGENT_LLM=keyword, gate off) and
+  confirmed via Playwright: page title "Funnel Copilot — synthetic data
+  demo", .brand-name text "Funnel Copilot", #footer text ends
+  "Independent portfolio demo · synthetic data · not affiliated with any
+  hearing-care company." Screenshot: reports/m20_debrand_welcome.png.
+- Zero visual change: no CSS token (color/typography/spacing) value was
+  touched anywhere in this sweep — every edit above is a text-content,
+  comment, or string-literal change only.

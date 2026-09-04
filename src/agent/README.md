@@ -72,7 +72,7 @@ table names or any qualified `bronze.*`/`silver.*`/`gold.*` object. See
 | `AGENT_REASONING_EFFORT` | — | Module M12. Blanket `reasoning_effort` for any tier that doesn't already name its own in `config/model_tiers.json` (a tier's explicit value always wins). |
 | `DATABRICKS_SERVER_HOSTNAME` / `DATABRICKS_HTTP_PATH` / `DATABRICKS_TOKEN` | — | Databricks driver connection. |
 | `DATABRICKS_CATALOG` | `workspace` | Databricks catalog the raw tables AND the bronze/silver/gold schemas live under. |
-| `DATABRICKS_SCHEMA` | `sonova` | Databricks schema the three raw tables live under (this is the `{{raw}}` value `scripts/load_to_databricks.py` substitutes into `sql/medallion.sql`). |
+| `DATABRICKS_SCHEMA` | `funnel` | Databricks schema the three raw tables live under (this is the `{{raw}}` value `scripts/load_to_databricks.py` substitutes into `sql/medallion.sql`). |
 
 ## Run it
 

@@ -1,4 +1,4 @@
-# System Architecture — Phonak Funnel Copilot
+# System Architecture — Funnel Copilot
 
 Two agents live in this system: an **interactive analytics agent** (answers
 questions, live) and a **batch sentinel agent** (watches data health, daily).

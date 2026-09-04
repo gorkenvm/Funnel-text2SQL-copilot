@@ -56,7 +56,7 @@ class TestLoadSettings:
         }
         settings = loader.load_settings(env=env)
         assert settings.catalog == DEFAULT_DATABRICKS_CATALOG == "workspace"
-        assert settings.schema == DEFAULT_DATABRICKS_SCHEMA == "sonova"
+        assert settings.schema == DEFAULT_DATABRICKS_SCHEMA == "funnel"
 
     def test_explicit_catalog_and_schema_override_defaults(self):
         env = {
@@ -81,24 +81,24 @@ def settings():
         http_path="/sql/1.0/warehouses/abc123",
         token="dapi-fake",
         catalog="workspace",
-        schema="sonova",
+        schema="funnel",
     )
 
 
 class TestStatementGeneration:
     def test_schema_ddl(self, settings):
-        assert loader.schema_ddl(settings) == "CREATE SCHEMA IF NOT EXISTS workspace.sonova"
+        assert loader.schema_ddl(settings) == "CREATE SCHEMA IF NOT EXISTS workspace.funnel"
 
     def test_volume_ddl(self, settings):
         assert (
             loader.volume_ddl(settings)
-            == "CREATE VOLUME IF NOT EXISTS workspace.sonova.raw"
+            == "CREATE VOLUME IF NOT EXISTS workspace.funnel.raw"
         )
 
     def test_volume_path(self, settings):
         assert (
             loader.volume_path(settings, "web_events")
-            == "/Volumes/workspace/sonova/raw/web_events.parquet"
+            == "/Volumes/workspace/funnel/raw/web_events.parquet"
         )
 
     def test_put_statement_uses_overwrite_and_volume_path(self, settings, tmp_path):
@@ -107,17 +107,17 @@ class TestStatementGeneration:
         stmt = loader.put_statement(local, settings, "web_events")
         assert stmt.startswith("PUT ")
         assert stmt.endswith("OVERWRITE")
-        assert "/Volumes/workspace/sonova/raw/web_events.parquet" in stmt
+        assert "/Volumes/workspace/funnel/raw/web_events.parquet" in stmt
         assert local.as_posix() in stmt
 
     def test_ctas_statement_selects_from_volume_parquet(self, settings):
         stmt = loader.ctas_statement(settings, "app_events")
-        assert stmt.startswith("CREATE OR REPLACE TABLE workspace.sonova.app_events AS")
-        assert "parquet.`/Volumes/workspace/sonova/raw/app_events.parquet`" in stmt
+        assert stmt.startswith("CREATE OR REPLACE TABLE workspace.funnel.app_events AS")
+        assert "parquet.`/Volumes/workspace/funnel/raw/app_events.parquet`" in stmt
 
     def test_count_statement_targets_fully_qualified_table(self, settings):
         stmt = loader.count_statement(settings, "id_bridge")
-        assert stmt == "SELECT COUNT(*) AS n FROM workspace.sonova.id_bridge"
+        assert stmt == "SELECT COUNT(*) AS n FROM workspace.funnel.id_bridge"
 
     def test_statements_are_idempotent_by_construction(self, settings):
         # CREATE ... IF NOT EXISTS / OVERWRITE / CREATE OR REPLACE are all
@@ -338,7 +338,7 @@ class TestDatabricksDriverCatalogSchema:
         monkeypatch.setenv("DATABRICKS_HTTP_PATH", "/sql/1.0/warehouses/abc123")
         monkeypatch.setenv("DATABRICKS_TOKEN", "dapi-fake")
 
-    def test_defaults_workspace_and_sonova_when_unset(self, monkeypatch, fake_databricks_module):
+    def test_defaults_workspace_and_funnel_when_unset(self, monkeypatch, fake_databricks_module):
         self._set_required_env(monkeypatch)
         monkeypatch.delenv("DATABRICKS_CATALOG", raising=False)
         monkeypatch.delenv("DATABRICKS_SCHEMA", raising=False)
@@ -348,7 +348,7 @@ class TestDatabricksDriverCatalogSchema:
         DatabricksDriver()
 
         assert fake_databricks_module["catalog"] == "workspace"
-        assert fake_databricks_module["schema"] == "sonova"
+        assert fake_databricks_module["schema"] == "funnel"
         assert fake_databricks_module["server_hostname"] == "adb-1.azuredatabricks.net"
         assert fake_databricks_module["http_path"] == "/sql/1.0/warehouses/abc123"
         assert fake_databricks_module["access_token"] == "dapi-fake"
@@ -356,14 +356,14 @@ class TestDatabricksDriverCatalogSchema:
     def test_passes_explicit_catalog_and_schema_from_env(self, monkeypatch, fake_databricks_module):
         self._set_required_env(monkeypatch)
         monkeypatch.setenv("DATABRICKS_CATALOG", "main")
-        monkeypatch.setenv("DATABRICKS_SCHEMA", "prod_sonova")
+        monkeypatch.setenv("DATABRICKS_SCHEMA", "prod_funnel")
 
         from agent.db import DatabricksDriver
 
         DatabricksDriver()
 
         assert fake_databricks_module["catalog"] == "main"
-        assert fake_databricks_module["schema"] == "prod_sonova"
+        assert fake_databricks_module["schema"] == "prod_funnel"
 
     def test_missing_required_env_raises_before_importing_connector(self, monkeypatch):
         for var in ("DATABRICKS_SERVER_HOSTNAME", "DATABRICKS_HTTP_PATH", "DATABRICKS_TOKEN"):
