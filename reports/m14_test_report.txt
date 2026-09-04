@@ -1,0 +1,264 @@
+M14 — Ad-hoc chart synthesis for novel run_sql answers
+=======================================================
+
+Bug
+---
+A novel run_sql answer that is not backed by a registered metric (e.g. "Weekly
+trend of app opens on Android") comes back from the server with `rows` but no
+`chart` spec — the server only attaches a chart spec for known metrics. The
+frontend's `finishWithResult()` gated both the chat chart and the dashboard
+card on `result.chart && result.rows`, so a rows-only novel answer produced
+neither: the user saw "Show data" only and no way to see the trend as a chart
+or pin it to the dashboard.
+
+Fix (app/static/index.html only — no backend change)
+------------------------------------------------------
+1. New function `inferChartSpec(rows)`, inserted immediately before
+   `pickIdealChart`. Pure, side-effect-free, returns either a chart spec
+   object `{type, x, y, series?}` or `null`.
+
+   Rules:
+     - `rows.length < 2` -> null (single-row answers stay the stat-tile's job).
+     - Split columns into numeric measure columns vs. non-numeric/temporal
+       dimension columns (a column counts as numeric only if every non-null
+       value in it is a JS number).
+     - Need >=1 numeric column and 1-2 dimension columns, else null (all-text
+       rows, or too many dimensions to chart sensibly).
+     - x = the dimension column that `idealLooksTemporal()` (existing
+       helper, reused unmodified) identifies as date/day/week/month-like,
+       else the first dimension column.
+     - Id-like-column guard: if x is NOT temporal, and there are >= 8 rows,
+       and >= 90% of x's values are distinct, return null (a raw id/free-text
+       column, not a real repeating category). Skipped entirely when x is
+       temporal, since every date in a genuine trend is naturally distinct —
+       that IS the desired chart, not a false positive.
+     - y = the first numeric column whose name matches
+       /count|rate|users|value|total|avg|amount|pct|percent|share|conversion/i,
+       else the first numeric column.
+     - series = the other dimension column (if any) when its distinct-value
+       count is <= 6, else omitted.
+
+   Threshold constants: INFER_ID_LIKE_MIN_ROWS=8, INFER_ID_LIKE_DISTINCT_RATIO=0.9,
+   INFER_LOW_CARDINALITY_MAX=6, INFER_MEASURE_NAME_RE (see above).
+
+2. `finishWithResult(result, question, userMsgEl)` changed from gating on
+   `result.chart && result.rows` to:
+
+       var spec = result.chart || inferChartSpec(result.rows);
+       if (spec){
+         var idealAdhoc = pickIdealChart(result.rows, spec);
+         prependCard({ ... });
+       }
+
+   `inferChartSpec` returns null in exactly the cases that already produced
+   no card pre-M14 (no rows, single row, no numeric column, id-like column),
+   so this change can only ever ADD a card, never change or remove one that
+   already existed. `pickIdealChart` (unchanged) still makes the final
+   type decision (e.g. upgrading a temporal-x bar spec to a line chart).
+
+3. Both the SSE path (`streamAsk`'s `finalize()`) and the legacy POST
+   fallback path (`askViaPost`) already funnel into this single
+   `finishWithResult` — confirmed via source inspection, no separate guard
+   existed on the SSE "answer" event handler, so one edit covers both paths
+   as required.
+
+4. No new EN/TR strings — the ad-hoc card's title is still the question text
+   (or `result.title` for `mode === "metric"`), matching pre-M14 behavior.
+
+Validation
+----------
+- `python -m pytest -q` → 433 passed (unchanged from the M13 baseline —
+  frontend-only fix, no backend tests affected).
+- App restarted: `AGENT_LLM=keyword AGENT_DB=duckdb`, port 8129, no
+  `DEMO_PASSPHRASE` set (confirmed via `curl :8129/health` -> `"locked": false`).
+- The deterministic keyword planner cannot itself produce a genuinely novel
+  run_sql answer like "Weekly trend of app opens on Android" (it only
+  matches registered metrics/dashboard intents), so validation used
+  Playwright's `page.route()` network interception as a test-only harness
+  (no application code changed for this): `**/api/ask/stream*` was routed to
+  fail with HTTP 500, which triggers the frontend's own existing
+  `es.onerror -> fallback() -> askViaPost()` logic; `**/api/ask` was then
+  routed to return a hand-crafted JSON payload with rows and `chart: null`,
+  in the exact shape a real novel run_sql answer would have. This exercises
+  the unmodified, real `finishWithResult` / `inferChartSpec` / `pickIdealChart`
+  / `prependCard` code path end-to-end.
+
+  Script: scratchpad `m14_shots.py` (not part of the repo). Output:
+      saved: ad-hoc rows-only answer produced a dashboard card
+      cards after trend question: 1
+      cards after single-number question: 1
+      saved: single-number answer produced no extra card
+      ALL OK
+
+- reports/m14_adhoc_chart_card.png — "Weekly trend of app opens on Android"
+  (6 rows: week_start + opens, chart: null from the server) renders as a
+  LINE chart (green line + area fill) in the Live dashboard panel, x-axis
+  showing the 6 week-start dates, title = the question text, with "Ask about
+  this chart" and a "Details" disclosure. This confirms `idealLooksTemporal`
+  correctly identified `week_start` as temporal, `inferChartSpec` produced
+  `{type:"bar", x:"week_start", y:"opens"}`, and `pickIdealChart`'s existing
+  rule 2 upgraded it to a line chart — no code change was needed in
+  `pickIdealChart` itself.
+
+- reports/m14_adhoc_no_junk_card.png — after asking a single-number,
+  non-chartable question ("How many total test starts were there?", 1 row,
+  `total_starts: 100000`, chart: null), the Live dashboard panel still shows
+  only the one pre-existing trend card; the chat answer renders normally
+  (with Show SQL / Show data / feedback row) but adds NO dashboard card,
+  confirming `inferChartSpec`'s `rows.length < 2` guard preserves the
+  pre-M14 behavior for single-row/stat-tile-shaped answers exactly.
+
+Changed files
+-------------
+- app/static/index.html (frontend only):
+    - new function `inferChartSpec(rows)` + four threshold constants,
+      inserted immediately before `pickIdealChart`.
+    - `finishWithResult(result, question, userMsgEl)` modified to compute
+      `spec = result.chart || inferChartSpec(result.rows)` and gate the
+      ad-hoc `prependCard(...)` call on `spec` instead of `result.chart`.
+
+No backend files changed; no config/docs changes; pytest baseline unchanged
+at 433.
+
+
+M14-fix — "Reset layout" silent no-op bug
+==========================================
+
+Bug report
+----------
+"The Reset layout link next to Live dashboard does not work anymore." The
+coordinator's suggested repro (build the top-12 dashboard, then reorder a
+card, close one, switch a chart type, collapse a Details section, then
+click Reset layout) was tried FIRST and did not reproduce a bug — that
+whole flow, and the equivalent flow against an M11 natural-language
+filtered dashboard, both correctly cleared the persisted board state
+(order/closed/chartType) and redrew the grid in default order/types with
+every card present. See the investigation trail below for every scenario
+tried before the actual cause was found.
+
+Investigation (ruled out, in order)
+------------------------------------
+1. Top-12 dashboard: build -> forced reorder -> close a card -> switch a
+   chart type -> expand Details -> Reset layout. Worked correctly, 0 console
+   errors. (script: scratchpad m14_reset_repro.py)
+2. M11 filtered dashboard ("KPI dashboard for the last 3 months" chip, a
+   real natural-language build_dashboard call): reorder -> Reset layout.
+   Worked correctly, filter chip stays ("Last 3 months") exactly as
+   specified (reset does not merge with the chip's own × filter-reset).
+   (scratchpad m14_reset_filtered.py)
+3. Real Playwright `locator.drag_to()` (actual dragstart/dragover/drop
+   events, confirmed firing via temporary capture-phase console
+   instrumentation) followed by close + chart-type-switch + Reset layout:
+   worked correctly. (scratchpad m14_debug_realdrag.py, m14_debug_dndevents.py)
+4. Pre-seeded `funnelCopilotBoard_v1` localStorage (a genuinely reordered
+   `order` array, a `closed` entry, and a `chartType` override) written
+   before the page's own script ran, then build + Reset layout: state
+   correctly restored to defaults. (scratchpad m14_debug_preseed.py)
+5. Stress test: cycle every one of the 12 board cards' chart-type buttons
+   twice each (including pie/funnel/line/bar variants), close 2 cards,
+   click Reset layout TWICE in a row: worked correctly both times, 0
+   console/page errors. (scratchpad m14_stress_reset.py)
+
+None of the above reproduced anything — no thrown exception, no
+console/page error, no stale UI — in any of five separate Playwright
+scripts covering every combination the bug report named.
+
+Root cause (found)
+-------------------
+`resetBoardLayout()` (app/static/index.html) has always been gated on
+`lastDashboardCards`, a module-level variable set ONLY by
+`renderDashboardGrid()` — i.e. only by the top-12 "Build" button or an
+`build_dashboard` filtered result:
+
+    function resetBoardLayout(){
+      boardState = defaultBoardState();
+      saveBoardState();
+      if (lastDashboardCards){
+        renderDashboardGrid(lastDashboardCards, null);
+      }
+    }
+
+When `lastDashboardCards` is still null — i.e. the user has never clicked
+"Build top-12 KPI dashboard" and never asked a natural-language dashboard
+question this session — the `if` guard silently skips the grid entirely.
+Before M11-addendum ("ad-hoc chart card for a single chat answer") this
+was harmless: with no board built, the grid was always empty anyway, so
+there was nothing to reset. But an ad-hoc chat answer's chart card
+(`prependCard()`, M11-addendum; now hit far more often after this same
+M14's `inferChartSpec` fix, which makes many more chat answers produce a
+card) is inserted directly into the SAME `#grid`, is fully `draggable` and
+has a working close (×) button — visually indistinguishable from a
+board card — but it carries no `data-card-key` and is never tracked by
+`lastDashboardCards`. So: ask any question that produces a chart card
+WITHOUT ever building a dashboard, then click "Reset layout" — the button
+does nothing at all. `boardState` is silently cleared in localStorage (a
+correct but invisible effect, since it held nothing this session anyway),
+but the on-screen card the user is looking at does not move, change, or
+disappear. That is indistinguishable from "the button doesn't work" and
+matches the bug report exactly. Confirmed reproducible:
+  - fresh page load -> ask "Which channel has the best D30 retention?" via
+    chat (no dashboard ever built) -> card appears on Live dashboard ->
+    click Reset layout -> card count unchanged (1 -> 1), no visible effect.
+    (scratchpad m14_reset_nodash_bug.py, before the fix)
+
+This matches the coordinator's own "M11 (renderDashboardGrid signature
+change / lastDashboardCards)" suspect area precisely — the bug is in how
+`lastDashboardCards` (introduced by M11's dashboard-persistence work) is
+used as the sole gate for whether Reset layout has any effect, with no
+fallback for a grid that holds only ephemeral ad-hoc cards.
+
+Also checked and confirmed correct (no change needed): building the top-12
+board, THEN asking an ad-hoc chat question on top of it (mixed board +
+ad-hoc grid), then Reset layout — correctly discards the ephemeral ad-hoc
+card and restores the 12 board cards in default order/types. Ad-hoc cards
+were always documented as ephemeral/non-board-state, so being dropped by a
+board reset when a board IS present is expected, not a regression.
+(scratchpad m14_reset_mixed.py)
+
+Fix
+---
+`resetBoardLayout()` in app/static/index.html: the `else` branch (no board
+ever built) now clears the grid to its empty state instead of doing
+nothing, exactly mirroring what `renderDashboardGrid()` already does for
+an empty `cards` array — disposes any live chart instances, empties
+`#grid`, and calls `maybeShowEmptyState()`. `boardState` is still always
+reset to defaults first, unchanged from before. No other behavior changes:
+splitter width, theme, language, and the active filter chip are still
+untouched by this function, exactly as documented.
+
+    function resetBoardLayout(){
+      boardState = defaultBoardState();
+      saveBoardState();
+      if (lastDashboardCards){
+        renderDashboardGrid(lastDashboardCards, null);
+      } else {
+        chartInstances.forEach(function(inst){ inst.dispose(); });
+        chartInstances = [];
+        els.grid.innerHTML = "";
+        maybeShowEmptyState();
+      }
+    }
+
+Validation
+----------
+- `python -m pytest -q` -> 433 passed (unchanged; frontend-only fix).
+- App restarted keyword/duckdb, port 8129.
+- reports/m14_reset_layout_before.png / _after.png: the actual bug's repro
+  (no dashboard built, one ad-hoc chart card on screen) — before shows the
+  "Which channel has the best D30 retention?" chart card present; after
+  shows Reset layout correctly clearing it to the "Ask a question or build
+  the KPI dashboard..." empty state.
+- reports/m14_reset_layout_filtered_before.png / _after.png: the M11
+  filtered-dashboard case (chip "Last 3 months" active) — confirms Reset
+  layout resets the filtered board's order/chart-types while the filter
+  chip and its label stay untouched, exactly per the coordinator's
+  "don't merge the two concerns" instruction.
+- All five earlier non-reproducing scenarios (top-12 build+reorder+close+
+  chart-type+details, real drag_to, pre-seeded state, stress-cycle all 12
+  chart types + double reset, mixed board+ad-hoc) re-ran clean after the
+  fix, confirming no regression: 0 console/page errors in any of them.
+
+Changed files
+-------------
+- app/static/index.html: `resetBoardLayout()` only — added the `else`
+  branch described above. No other function touched.

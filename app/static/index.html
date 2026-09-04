@@ -1256,6 +1256,15 @@
     font-size:.72rem;
     font-family:var(--font-ui);
   }
+  /* ---------- M16: catalog comment "More"/"Daha fazla" toggle ---------- */
+  .catalog-comment-toggle{
+    display:inline;
+    margin-left:4px;
+    color:var(--accent);
+    font-weight:600;
+    cursor:pointer;
+    text-decoration:underline;
+  }
   .catalog-empty{font-size:.8rem;color:var(--text-muted);padding:4px 6px;}
 
   /* ---------- M8: chat empty-state welcome ---------- */
@@ -1556,7 +1565,7 @@
     <div class="dash-toolbar">
       <div class="dash-toolbar-title">
         <h2 data-i18n="dashTitle">Live dashboard</h2>
-        <button type="button" class="reset-layout-link" id="reset-layout-btn" data-i18n="resetLayoutLink">Reset layout</button>
+        <button type="button" class="reset-layout-link" id="reset-layout-btn" data-i18n="clearDashboardLink">Clear dashboard</button>
         <!-- M11: shown only while a natural-language filtered dashboard is
              active (see renderDashFilterChip()); clearing it re-fetches
              the unfiltered legacy top-12 dashboard. -->
@@ -1618,17 +1627,18 @@
       errorRateLimit: "Too many requests — please wait a moment and try again.",
       you: "You",
       copilot: "Copilot",
-      traceLabelPlan: "Planning",
-      traceLabelSchema: "Reading schema",
-      traceLabelSearching: "Searching knowledge",
-      traceLabelSql: "Running SQL",
-      traceLabelRetry: "Fixing query",
-      traceLabelAnswer: "Writing answer",
-      traceLabelMetric: "Fetching metric",
+      traceLabelPlan: "Planning the approach",
+      traceLabelSchema: "Inspecting the schema",
+      traceLabelSearching: "Searching the knowledge base",
+      traceLabelSql: "Writing SQL",
+      traceLabelSqlDone: "Executed SQL",
+      traceLabelRetry: "Fixing the SQL and retrying",
+      traceLabelAnswer: "Writing the answer",
+      traceLabelMetric: "Running governed KPI",
       cardNotesToggle: "Details",
       traceRetryBadge: "retry {n}",
       traceViewLabel: "View trace ({n} steps)",
-      traceLabelContext: "Using context from previous question",
+      traceLabelContext: "Recalling context",
       showData: "Show data",
       hideData: "Hide data",
       dataCapNote: "Showing first 50 rows of {n}.",
@@ -1649,7 +1659,7 @@
       latencyTitle: "Answer time",
       downloadCsv: "Download as CSV",
       csvDefaultFilename: "funnel-data",
-      resetLayoutLink: "Reset layout",
+      clearDashboardLink: "Clear dashboard",
       catalogToggle: "Catalog",
       catalogTitle: "Data catalog",
       catalogClose: "Close",
@@ -1659,6 +1669,8 @@
       catalogLayerSilver: "Silver",
       catalogLayerGold: "Gold",
       catalogEmptyLayer: "No objects in this layer.",
+      catalogCommentMore: "More",
+      catalogCommentLess: "Less",
       // ---- M10 additions ----
       connDatabricks: "Databricks",
       connDuckdb: "DuckDB local",
@@ -1679,7 +1691,8 @@
         "KPI dashboard for the last 3 months"
       ],
       // ---- M11 additions ----
-      traceLabelDashboard: "Building dashboard",
+      traceLabelDashboard: "Building the dashboard",
+      traceLabelDashboardDone: "Dashboard built",
       dashFilterClearTitle: "Clear filter",
       dashFilterAll: "All data",
       // ---- M12 additions ----
@@ -1715,17 +1728,18 @@
       errorRateLimit: "Çok fazla istek gönderildi — lütfen biraz bekleyip tekrar deneyin.",
       you: "Siz",
       copilot: "Copilot",
-      traceLabelPlan: "Planlanıyor",
-      traceLabelSchema: "Şema okunuyor",
+      traceLabelPlan: "Yaklaşım planlanıyor",
+      traceLabelSchema: "Şema inceleniyor",
       traceLabelSearching: "Bilgi tabanında aranıyor",
-      traceLabelSql: "SQL çalıştırılıyor",
-      traceLabelRetry: "Sorgu düzeltiliyor",
+      traceLabelSql: "SQL yazılıyor",
+      traceLabelSqlDone: "SQL çalıştırıldı",
+      traceLabelRetry: "SQL düzeltilip yeniden deneniyor",
       traceLabelAnswer: "Cevap yazılıyor",
-      traceLabelMetric: "KPI getiriliyor",
+      traceLabelMetric: "Onaylı KPI çalıştırılıyor",
       cardNotesToggle: "Detaylar",
       traceRetryBadge: "deneme {n}",
       traceViewLabel: "Ajan izini gör ({n} adım)",
-      traceLabelContext: "Önceki sorunun bağlamı kullanılıyor",
+      traceLabelContext: "Bağlam hatırlanıyor",
       showData: "Veriyi göster",
       hideData: "Veriyi gizle",
       dataCapNote: "{n} satırdan ilk 50 tanesi gösteriliyor.",
@@ -1746,7 +1760,7 @@
       latencyTitle: "Yanıt süresi",
       downloadCsv: "CSV olarak indir",
       csvDefaultFilename: "funnel-verisi",
-      resetLayoutLink: "Yerleşimi sıfırla",
+      clearDashboardLink: "Panoyu temizle",
       catalogToggle: "Katalog",
       catalogTitle: "Veri kataloğu",
       catalogClose: "Kapat",
@@ -1756,6 +1770,8 @@
       catalogLayerSilver: "Gümüş",
       catalogLayerGold: "Altın",
       catalogEmptyLayer: "Bu katmanda nesne yok.",
+      catalogCommentMore: "Daha fazla",
+      catalogCommentLess: "Daha az",
       // ---- M10 eklemeleri ----
       connDatabricks: "Databricks",
       connDuckdb: "Yerel DuckDB",
@@ -1776,7 +1792,8 @@
         "Son 3 ay için KPI kokpiti"
       ],
       // ---- M11 eklemeleri ----
-      traceLabelDashboard: "Kokpit kuruluyor",
+      traceLabelDashboard: "Dashboard kuruluyor",
+      traceLabelDashboardDone: "Dashboard kuruldu",
       dashFilterClearTitle: "Filtreyi temizle",
       dashFilterAll: "Tüm veri",
       // ---- M12 eklemeleri ----
@@ -2265,15 +2282,28 @@
     return Object.assign({}, chart, { type: stored });
   }
 
-  function resetBoardLayout(){
+  // M16: renamed from resetBoardLayout — the user's explicit expectation
+  // is "start over with an empty dashboard", not "reset ordering/types but
+  // keep whatever's built". "Clear dashboard" (EN) / "Panoyu temizle" (TR)
+  // says that honestly; "Reset layout" implied a lighter touch than what
+  // this button has always fully done to persisted state anyway. Clears
+  // EVERYTHING the button's name now promises: every card (board-built AND
+  // ad-hoc chat cards alike), every live chart instance, the persisted
+  // board-state (order/closed/chartType), lastDashboardCards (so a stale
+  // board can never reappear versus this now-empty grid), and the M11
+  // filter chip (a cleared dashboard with a lingering filter label makes
+  // no sense). Splitter width, theme, and language are untouched — each
+  // has its own separate control and this button was never meant to reach
+  // them.
+  function clearDashboard(){
     boardState = defaultBoardState();
     saveBoardState();
-    if (lastDashboardCards){
-      // No new /api/dashboard fetch happens on a plain layout reset, so
-      // there is no fresh latency to report — redraw without a requestStart
-      // rather than showing a stale, minutes-old elapsed time.
-      renderDashboardGrid(lastDashboardCards, null);
-    }
+    lastDashboardCards = null;
+    chartInstances.forEach(function(inst){ inst.dispose(); });
+    chartInstances = [];
+    els.grid.innerHTML = "";
+    hideDashFilterChip();
+    maybeShowEmptyState();
   }
 
   // ---------------------------------------------------------------- utils
@@ -2528,6 +2558,17 @@
     return headers;
   }
 
+  // M15: the one place an EventSource URL picks up the demo gate's key.
+  // EventSource cannot set request headers, so /api/ask/stream alone also
+  // accepts the key as a `k` query param (see app.main._demo_gate_middleware
+  // and docs/api_contract.md) — every other endpoint only ever honors the
+  // X-Demo-Key header via demoGateHeaders(). Factored out so a future
+  // second EventSource call site builds its URL through this too, instead
+  // of re-deriving (and risking forgetting) the same `&k=...` logic.
+  function demoGateQueryParam(){
+    return demoKey ? "&k=" + encodeURIComponent(demoKey) : "";
+  }
+
   function showDemoLock(){
     if (els.demoLockOverlay) els.demoLockOverlay.hidden = false;
     if (els.demoLockInput) els.demoLockInput.focus();
@@ -2546,12 +2587,14 @@
   // needs validating against the server (it could be stale — e.g. the
   // operator rotated the passphrase) before the lock screen is skipped.
   function validateStoredDemoKey(){
-    fetch("/api/metrics", {headers: demoGateHeaders({})}).then(function(resp){
-      if (resp.ok){ hideDemoLock(); return; }
-      demoKey = null;
-      try { window.sessionStorage.removeItem(DEMO_KEY_STORAGE_KEY); } catch (e) { /* ignore */ }
-      showDemoLock();
-    }).catch(function(){ showDemoLock(); });
+    // M15: routed through apiGet (-> apiFetch) like every other gated call
+    // — a bad/stale stored key already gets cleared and the lock re-shown
+    // by handleDemoGateExpiry() inside apiFetch on the 401 branch; the
+    // .catch() here just covers that path (a no-op re-call of
+    // showDemoLock()) and the plain network-error case identically to
+    // before.
+    apiGet("/api/metrics").then(function(){ hideDemoLock(); })
+      .catch(function(){ showDemoLock(); });
   }
 
   function checkDemoGate(){
@@ -2592,14 +2635,42 @@
   }
 
   // ---------------------------------------------------------------- API
-  function apiPost(path, body){
-    return fetch(path, {
-      method: "POST",
-      headers: demoGateHeaders({"Content-Type": "application/json"}),
-      body: JSON.stringify(body || {})
-    }).then(function(resp){
+  // M15: EVERY /api/* call (dashboard build, catalog, metrics, ask, and the
+  // health poll) funnels through apiFetch() below via the apiGet/apiPost
+  // wrappers — the ONE place that (a) the demo gate's X-Demo-Key header
+  // gets attached (demoGateHeaders(), M13) and (b) a 401 "locked" response
+  // is reacted to. Before this fix, apiGet/apiPost already happened to
+  // attach the header correctly on every current call site (confirmed by
+  // network-capture audit — see reports/m15_test_report.txt), but nothing
+  // anywhere reacted to a stale/rotated key beyond a generic error toast:
+  // a gated call just failed silently-looking, which is exactly what made
+  // a real "why doesn't Build do anything" report hard for a user to
+  // diagnose. Consolidating here means (1) a future new endpoint can never
+  // add a raw fetch() that forgets the header — it has nothing to gain by
+  // not using apiGet/apiPost — and (2) the 401-recovery behavior is written
+  // exactly once rather than copy-pasted per call site.
+  function handleDemoGateExpiry(status, json){
+    // Only a real 401 ("wrong/missing key") means the STORED key itself is
+    // bad (e.g. the operator rotated DEMO_PASSPHRASE mid-session) — clear
+    // it and re-show the lock screen so the user can react immediately
+    // instead of hitting a wall of unexplained errors. A 429 (too many
+    // recent failures from this IP — the brute-force damper) is a
+    // temporary lockout, not a bad key: the user's own stored key may
+    // still be fine, so leave it in place and let the normal per-request
+    // error (a toast) surface instead of re-locking someone who did
+    // nothing wrong.
+    if (status !== 401) return;
+    demoKey = null;
+    try { window.sessionStorage.removeItem(DEMO_KEY_STORAGE_KEY); } catch (e) { /* ignore */ }
+    showDemoLock();
+    setDemoLockError((json && json.message) || t("demoLockWrong"));
+  }
+
+  function apiFetch(path, options){
+    return fetch(path, options).then(function(resp){
       return resp.json().then(function(json){
         if (!resp.ok){
+          handleDemoGateExpiry(resp.status, json);
           var err = new Error(json.error || "Request failed");
           err.status = resp.status;
           err.payload = json;
@@ -2610,17 +2681,16 @@
     });
   }
 
-  function apiGet(path){
-    return fetch(path, {headers: demoGateHeaders({})}).then(function(resp){
-      return resp.json().then(function(json){
-        if (!resp.ok){
-          var err = new Error(json.error || "Request failed");
-          err.status = resp.status;
-          throw err;
-        }
-        return json;
-      });
+  function apiPost(path, body){
+    return apiFetch(path, {
+      method: "POST",
+      headers: demoGateHeaders({"Content-Type": "application/json"}),
+      body: JSON.stringify(body || {})
     });
+  }
+
+  function apiGet(path){
+    return apiFetch(path, {headers: demoGateHeaders({})});
   }
 
   // ---------------------------------------------------------------- chat UI
@@ -2820,11 +2890,16 @@
     els.messages.scrollTop = els.messages.scrollHeight;
 
     function addStep(opts){
-      // opts: {icon, label, callId, errorStep, retryAttempt, reason, sql, sqlList}
+      // opts: {icon, label, callId, doneLabel, errorStep, retryAttempt, reason, sql, sqlList}
       // `icon` is an ICONS key (M10) — see iconSvg() above — not raw markup.
+      // M17: `doneLabel`, when given, is stashed on the element so
+      // markDone() below can flip the label text (e.g. "Writing SQL" ->
+      // "Executed SQL") the moment this step's tool_result arrives —
+      // purely cosmetic, no effect for a step that never supplies one.
       var step = document.createElement("div");
       step.className = "trace-step" + (opts.errorStep ? " trace-error" : "");
       if (opts.callId) step.setAttribute("data-call-id", opts.callId);
+      if (opts.doneLabel) step.dataset.doneLabel = opts.doneLabel;
 
       var iconWrap = document.createElement("span");
       iconWrap.className = "trace-icon";
@@ -2866,6 +2941,14 @@
       var step = el.querySelector('.trace-step[data-call-id="' + CSS.escape(callId) + '"]');
       if (!step) return;
       step.classList.add("done");
+      // M17: pending -> done label flip (e.g. "Writing SQL" -> "Executed
+      // SQL", "Building the dashboard" -> "Dashboard built") — only for
+      // steps that supplied a doneLabel at addStep() time; every other
+      // step's label is untouched, same as before this change.
+      if (step.dataset.doneLabel){
+        var labelEl = step.querySelector(".trace-label");
+        if (labelEl) labelEl.textContent = step.dataset.doneLabel;
+      }
       // Per-step duration (M7 hotfix): makes "where did the time go?"
       // answerable from the trace itself when a question runs long, and
       // feeds the collapsed summary's total (collapseTrace() below).
@@ -2981,13 +3064,31 @@
             callId: event.call_id
           });
         } else if (event.name === "build_dashboard"){
-          trace.addStep({icon: "chart", label: t("traceLabelDashboard"), callId: event.call_id});
+          trace.addStep({
+            icon: "chart",
+            label: t("traceLabelDashboard"),
+            callId: event.call_id,
+            doneLabel: t("traceLabelDashboardDone")
+          });
+        } else if (event.name === "run_sql"){
+          // M17: the "sql" event (below) carries the actual query text but
+          // no call_id of its own — stash this tool_call's call_id so the
+          // very next "sql" event can still be linked to its eventual
+          // "tool_result" for the pending -> done label flip.
+          trace.pendingSqlCallId = event.call_id;
         }
         // run_sql's line is rendered by the "sql" event instead, so the
         // query text is available inline as soon as the step appears.
         break;
       case "sql":
-        trace.addStep({icon: "database", label: t("traceLabelSql"), sql: event.sql});
+        trace.addStep({
+          icon: "database",
+          label: t("traceLabelSql"),
+          sql: event.sql,
+          callId: trace.pendingSqlCallId,
+          doneLabel: t("traceLabelSqlDone")
+        });
+        trace.pendingSqlCallId = null;
         break;
       case "retry":
         trace.addStep({
@@ -3124,6 +3225,75 @@
     var xk = String(spec.x || "").toLowerCase();
     if (xk === "stage" || xk === "step") return true;
     return rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], spec.x + "_order");
+  }
+
+  // ------------------------------------------------------- M14: ad-hoc chart synthesis
+  // A novel run_sql answer (no registered metric, so the server never
+  // attaches a chart spec) still has rows worth charting — e.g. "Weekly
+  // trend of app opens on Android" came back with rows but no chart, so
+  // finishWithResult's `result.chart && result.rows` guard skipped both
+  // the chat chart and the dashboard card, leaving only "Show data". This
+  // infers a spec purely from the row shape so that path is no longer a
+  // dead end. Pure function, never mutates `rows`; returns null whenever
+  // nothing sensible is chartable, and null is treated identically to
+  // "the server sent no chart" by every caller — so this can only ever
+  // ADD a chart, never change one that already existed.
+  var INFER_ID_LIKE_MIN_ROWS = 8;     // below this, "every value is unique" is a normal small category list (e.g. 2 platforms), not a raw id/free-text column
+  var INFER_ID_LIKE_DISTINCT_RATIO = 0.9;
+  var INFER_LOW_CARDINALITY_MAX = 6;  // same "small enough to be a real breakdown" bar as IDEAL_MANY_CATEGORIES, reused for a series candidate
+  var INFER_MEASURE_NAME_RE = /count|rate|users|value|total|avg|amount|pct|percent|share|conversion/i;
+
+  function inferChartSpec(rows){
+    if (!rows || rows.length < 2) return null; // single-row answers are the stat-tile's job, not this one's
+    var cols = Object.keys(rows[0]);
+    if (!cols.length) return null;
+
+    function isNumericCol(c){
+      var sawNumber = false;
+      for (var i = 0; i < rows.length; i++){
+        var v = rows[i][c];
+        if (v === null || v === undefined) continue;
+        if (typeof v !== "number") return false; // any non-numeric value disqualifies this as a measure column
+        sawNumber = true;
+      }
+      return sawNumber;
+    }
+    function distinctCountOf(c){
+      var seen = {}, n = 0;
+      rows.forEach(function(r){
+        var k = String(r[c]);
+        if (!Object.prototype.hasOwnProperty.call(seen, k)){ seen[k] = true; n++; }
+      });
+      return n;
+    }
+
+    var numericCols = cols.filter(isNumericCol);
+    var dimCols = cols.filter(function(c){ return numericCols.indexOf(c) === -1; });
+    // Need >=1 numeric measure and 1-2 non-numeric/temporal dimensions —
+    // zero measures (all-text rows) or zero/3+ dimensions is not this
+    // heuristic's problem to solve; null preserves today's behavior.
+    if (!numericCols.length || !dimCols.length || dimCols.length > 2) return null;
+
+    var temporalCol = dimCols.filter(function(c){ return idealLooksTemporal(c, rows); })[0];
+    var xCol = temporalCol || dimCols[0];
+    // A non-temporal x candidate whose values are essentially all unique
+    // (a raw id/free-text column, not a real repeating category) makes an
+    // unreadable chart — bail out rather than render one. A genuinely
+    // temporal column is exempt: every date in a trend is naturally
+    // distinct, and that IS the chart.
+    if (!temporalCol && rows.length >= INFER_ID_LIKE_MIN_ROWS &&
+        distinctCountOf(xCol) >= rows.length * INFER_ID_LIKE_DISTINCT_RATIO){
+      return null;
+    }
+
+    var yCol = numericCols.filter(function(c){ return INFER_MEASURE_NAME_RE.test(c); })[0] || numericCols[0];
+
+    var seriesCol = dimCols.filter(function(c){ return c !== xCol; })[0] || null;
+    if (seriesCol && distinctCountOf(seriesCol) > INFER_LOW_CARDINALITY_MAX) seriesCol = null;
+
+    var spec = {type: "bar", x: xCol, y: yCol};
+    if (seriesCol) spec.series = seriesCol;
+    return spec;
   }
 
   function pickIdealChart(rows, spec){
@@ -3781,20 +3951,30 @@
       // the SSE path already rendered the grid from its own "dashboard"
       // event before this ever runs.
       renderFilteredDashboard(result.cards, result.filter_label, null);
-    } else if (result.chart && result.rows && result.rows.length){
+    } else if (result.rows && result.rows.length){
       // M11 addendum: the same ideal-chart default applies to an ad-hoc
-      // chat answer's chart card. These cards are ephemeral (no board-state
-      // key — see the `card.dataset.cardKey` note in makeCard), so there is
-      // no persisted override to defer to here.
-      var idealAdhoc = pickIdealChart(result.rows, result.chart);
-      prependCard({
-        title: result.mode === "metric" ? (result.title || question) : question,
-        chart: idealAdhoc.chart,
-        rows: idealAdhoc.rows,
-        answer: result.answer,
-        consent_note: result.consent_note || "",
-        latencySecs: result.latencySecs
-      });
+      // chat answer's chart card. M14: when the server sent rows but no
+      // chart spec at all (a novel run_sql answer, not a registered
+      // metric — e.g. "Weekly trend of app opens on Android"),
+      // inferChartSpec() synthesizes one from the row shape instead of
+      // silently dropping the chart; it returns null exactly when today's
+      // pre-M14 behavior already showed no card (single-row answers,
+      // no numeric measure, ...), so this can only ever ADD a card, never
+      // change one that already existed. These cards are ephemeral (no
+      // board-state key — see the `card.dataset.cardKey` note in
+      // makeCard), so there is no persisted override to defer to here.
+      var spec = result.chart || inferChartSpec(result.rows);
+      if (spec){
+        var idealAdhoc = pickIdealChart(result.rows, spec);
+        prependCard({
+          title: result.mode === "metric" ? (result.title || question) : question,
+          chart: idealAdhoc.chart,
+          rows: idealAdhoc.rows,
+          answer: result.answer,
+          consent_note: result.consent_note || "",
+          latencySecs: result.latencySecs
+        });
+      }
     }
   }
 
@@ -3860,13 +4040,8 @@
       "&lang=" + encodeURIComponent(LANG) +
       "&tier=" + encodeURIComponent(currentTier) +
       "&session_id=" + encodeURIComponent(SESSION_ID) +
-      "&memory=" + encodeURIComponent(memoryEnabled() ? "on" : "off");
-    // M13: EventSource cannot set request headers, so the demo gate's key
-    // (when set) rides along as a `k` query param — the ONE endpoint that
-    // accepts this fallback server-side (see app.main._demo_gate_middleware
-    // and docs/api_contract.md); every other call uses the X-Demo-Key
-    // header via demoGateHeaders().
-    if (demoKey) url += "&k=" + encodeURIComponent(demoKey);
+      "&memory=" + encodeURIComponent(memoryEnabled() ? "on" : "off") +
+      demoGateQueryParam(); // M13/M15: see demoGateQueryParam() above
     try {
       es = new EventSource(url);
     } catch (e) {
@@ -3914,8 +4089,12 @@
           } else {
             // Keyless/deterministic path: build_dashboard never goes
             // through the tool-call loop, so there is no pre-existing
-            // step to attach onto — add one directly.
-            trace.addStep({icon: "chart", label: t("traceLabelDashboard"), sqlList: sqlList});
+            // step to attach onto — add one directly. By the time this
+            // event fires the dashboard is already fully built (`cards`
+            // above is the finished result), so this step is added
+            // straight in its DONE state (M17) rather than a pending
+            // label that would never get a tool_result to flip it.
+            trace.addStep({icon: "chart", label: t("traceLabelDashboardDone"), sqlList: sqlList});
           }
         }
         return;
@@ -3955,6 +4134,45 @@
     if (els.catalogBody) els.catalogBody.innerHTML = html;
   }
 
+  // M16: the medallion COMMENT ON texts (medallion.sql) are written for the
+  // agent and for Databricks' own metadata, not for a compact drawer — a
+  // full multi-paragraph comment overwhelmed the panel. The comments
+  // themselves are intentionally left untouched; only the DISPLAY here is
+  // shortened. Splits on the first ". " that looks like a real sentence
+  // boundary (a period+space followed by a capital letter or "(") — a
+  // trivial-but-robust-enough guard against splitting mid-abbreviation
+  // ("e.g. users..." isn't followed by a capital, so it's left alone).
+  // Returns {first, rest}; `rest` is "" when no such boundary exists (the
+  // whole comment IS one sentence), which the caller uses to decide
+  // whether a "More" toggle is even needed.
+  var CATALOG_SENTENCE_BOUNDARY_RE = /\.\s+(?=[A-Z(])/;
+  function splitFirstSentence(text){
+    var trimmed = (text || "").trim();
+    var m = CATALOG_SENTENCE_BOUNDARY_RE.exec(trimmed);
+    if (!m) return { first: trimmed, rest: "" };
+    return {
+      first: trimmed.slice(0, m.index + 1), // include the period itself
+      rest: trimmed.slice(m.index + m[0].length)
+    };
+  }
+
+  function buildCatalogCommentHtml(commentText){
+    var parts = splitFirstSentence(commentText);
+    if (!parts.rest){
+      // Single-sentence comment — no truncation happened, so no toggle.
+      return '<span class="catalog-item-comment">' + escapeHtml(parts.first) + '</span>';
+    }
+    var uid = "catcm-" + (++cardSeq);
+    var fullText = parts.first + " " + parts.rest;
+    return '<span class="catalog-item-comment">' +
+      '<span class="catalog-comment-text" id="' + uid + '" ' +
+        'data-short="' + escapeHtml(parts.first) + '" data-full="' + escapeHtml(fullText) + '">' +
+        escapeHtml(parts.first) + '</span>' +
+      '<span class="catalog-comment-toggle" data-target="' + uid + '" data-expanded="false">' +
+        escapeHtml(t("catalogCommentMore")) + '</span>' +
+    '</span>';
+  }
+
   function renderCatalogPanel(){
     if (!catalogCache || !catalogCache.layers){
       renderCatalogBody('<div class="catalog-empty">' + escapeHtml(t("catalogLoadError")) + '</div>');
@@ -3977,9 +4195,7 @@
         html += '<div class="catalog-empty">' + escapeHtml(t("catalogEmptyLayer")) + '</div>';
       } else {
         html += '<div class="catalog-items">' + items.map(function(it){
-          var comment = it.comment
-            ? '<span class="catalog-item-comment">' + escapeHtml(it.comment) + '</span>'
-            : "";
+          var comment = it.comment ? buildCatalogCommentHtml(it.comment) : "";
           return '<button type="button" class="catalog-item" data-name="' + escapeHtml(it.name) + '">' +
             '<span class="catalog-item-name">' + escapeHtml(it.name) + '</span>' + comment + '</button>';
         }).join("") + '</div>';
@@ -3992,6 +4208,20 @@
         // Clicking an object inserts its qualified name into the chat
         // input at the current cursor position (per the M8 spec).
         insertAtCursor(els.input, btn.getAttribute("data-name"));
+      });
+    });
+    // M16: "More"/"Daha fazla" toggles — stopPropagation so clicking one
+    // never also triggers its parent `.catalog-item` button's insert-name
+    // click handler above.
+    Array.prototype.forEach.call(els.catalogBody.querySelectorAll(".catalog-comment-toggle"), function(toggle){
+      toggle.addEventListener("click", function(e){
+        e.stopPropagation();
+        var target = document.getElementById(toggle.getAttribute("data-target"));
+        if (!target) return;
+        var expanded = toggle.getAttribute("data-expanded") === "true";
+        target.textContent = expanded ? target.getAttribute("data-short") : target.getAttribute("data-full");
+        toggle.textContent = expanded ? t("catalogCommentMore") : t("catalogCommentLess");
+        toggle.setAttribute("data-expanded", expanded ? "false" : "true");
       });
     });
   }
@@ -4199,7 +4429,7 @@
   setTier(currentTier); // reflect the persisted (or default) tier's active state on load
 
   // M8: "Reset layout" (dashboard order/closed/chart-type) + data catalog drawer
-  if (els.resetLayoutBtn) els.resetLayoutBtn.addEventListener("click", resetBoardLayout);
+  if (els.resetLayoutBtn) els.resetLayoutBtn.addEventListener("click", clearDashboard);
   if (els.catalogToggleBtn){
     els.catalogToggleBtn.addEventListener("click", function(){
       catalogOpen = !catalogOpen;

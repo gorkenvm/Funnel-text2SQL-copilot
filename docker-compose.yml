@@ -1,29 +1,52 @@
-# Example compose file for the Phonak Funnel Copilot demo (M2).
+# Compose file for the Phonak Funnel Copilot production deploy.
 #
 # Usage:
-#   ANTHROPIC_API_KEY=sk-ant-... docker compose up --build
+#   1) one-time (or whenever you want fresh synthetic data):
+#        docker compose --profile datagen run --rm datagen
+#      (writes data/*.parquet on the host via the shared volume — see the
+#      `datagen` service below; needs a WRITABLE mount, unlike the main
+#      service's `:ro` one)
+#   2) docker compose up -d --build
 #
-# Without ANTHROPIC_API_KEY the app falls back to the deterministic
-# KeywordLLM planner (English-only narration; TR/EN toggle still works for
-# the UI chrome).
+# All secrets/config (OPENAI_API_KEY, DEMO_PASSPHRASE, DATABRICKS_*, ...)
+# live in .env (see docs/deploy_runbook_vps.md) and load via `env_file` —
+# a single source of truth, not duplicated into an `environment:` block.
+# Without OPENAI_API_KEY/ANTHROPIC_API_KEY the app falls back to the
+# deterministic KeywordLLM planner (English-only narration; the TR/EN UI
+# toggle still works either way).
 services:
   funnel-copilot:
     build:
       context: .
       dockerfile: Dockerfile
     image: phonak-funnel-copilot:latest
+    env_file: .env
     ports:
-      - "8000:8000"
+      # Bound to loopback only — the public hostname is reached through
+      # the Cloudflare Tunnel (cloudflared → http://localhost:8000), never
+      # by exposing this port on the VPS's public interface directly.
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data:ro
-    environment:
-      AGENT_DB: ${AGENT_DB:-duckdb}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AGENT_MODEL: ${AGENT_MODEL:-claude-sonnet-4-5}
-      # Only needed when AGENT_DB=databricks:
-      DATABRICKS_SERVER_HOSTNAME: ${DATABRICKS_SERVER_HOSTNAME:-}
-      DATABRICKS_HTTP_PATH: ${DATABRICKS_HTTP_PATH:-}
-      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN:-}
-      DATABRICKS_CATALOG: ${DATABRICKS_CATALOG:-workspace}
-      DATABRICKS_SCHEMA: ${DATABRICKS_SCHEMA:-sonova}
     restart: unless-stopped
+
+  # One-shot synthetic-data generator, sharing the app's image so it always
+  # writes the exact schema the app expects. Not part of `docker compose
+  # up`'s default set (profile-gated) — run it explicitly:
+  #   docker compose --profile datagen run --rm datagen
+  # Equivalent one-liner without a profile, if ever preferred:
+  #   docker compose run --rm --volume ./data:/app/data funnel-copilot python src/generate_data.py
+  datagen:
+    profiles: ["datagen"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: phonak-funnel-copilot:latest
+    # Overrides the image's non-root USER: a bind-mounted host ./data may
+    # not be writable by the image's fixed appuser UID, and this container
+    # is short-lived and never network-facing, so root here costs nothing
+    # the main service doesn't already avoid.
+    user: root
+    volumes:
+      - ./data:/app/data
+    entrypoint: ["python", "src/generate_data.py"]

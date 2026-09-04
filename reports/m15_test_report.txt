@@ -1,0 +1,448 @@
+M15 — Demo gate: "Build top-12" regression report + 401 hardening
+====================================================================
+
+Bug report
+----------
+"With the M13 demo gate ENABLED (just turned it on and unlocked
+successfully), 'Build top-12 KPI dashboard' does nothing and 'Reset
+layout' appears broken too. With the gate off everything worked."
+Hypothesis given: some frontend call sites bypass demoGateHeaders(), so a
+gated call gets a silent 401 and renders nothing (an empty grid then makes
+Reset layout look dead as a side effect, per the M14-fix report).
+
+Investigation
+-------------
+Static audit of every network call site in app/static/index.html BEFORE
+any change, cross-checked against app.main._demo_gate_middleware:
+
+  Call site                              | Path            | Header before  | Gated?
+  ----------------------------------------|-----------------|----------------|--------
+  apiPost() (used by buildDashboard,     | /api/dashboard, | demoGateHeaders| yes
+    sendQuestion's POST fallback)        | /api/ask        | (X-Demo-Key)   |
+  apiGet() (used by pollHealth,          | /health,        | demoGateHeaders| /health:
+    checkDemoGate, openCatalogPanel)     | /api/catalog    | (X-Demo-Key)   | no (open)
+                                          |                 |                | /api/catalog: yes
+  validateStoredDemoKey() raw fetch      | /api/metrics    | demoGateHeaders| yes
+    (bootstrap: is a stored key still    |                 | (X-Demo-Key)   |
+    valid?)                              |                 |                |
+  demo-lock-form submit raw fetch        | /api/metrics    | X-Demo-Key:    | yes, but
+    (testing a CANDIDATE passphrase,     |                 | <candidate>    | intentionally
+    intentionally not yet in demoKey)    |                 | (not stored)   | not via
+                                          |                 |                | demoGateHeaders
+  streamAsk()'s EventSource              | /api/ask/stream | `&k=` query    | yes (the one
+    (cannot set headers)                 |                 | param          | endpoint that
+                                          |                 |                | accepts `k`)
+  downloadCsv()                          | (none — client- | n/a            | n/a, never
+                                          | side Blob only) |                | hits the API
+
+Every current call site already attached the header (or, for the two
+demo-lock-flow fetches, correctly did NOT — they predate having a trusted
+key at all). Live reproduction (Playwright: restart on port 8130 with
+DEMO_PASSPHRASE="open sesame demo", fresh load, unlock via the lock
+screen, click "Build top-12 KPI dashboard", capture every /api/* request's
+headers and response status) confirmed this — BEFORE any code change:
+
+    GET  /api/metrics    X-Demo-Key: open sesame demo   200
+    POST /api/dashboard  X-Demo-Key: open sesame demo   200
+    -> 12 cards rendered, 0 console/page errors.
+
+The exact reported symptom ("Build top-12 does nothing") did NOT
+reproduce with the current code, tried multiple ways: fresh unlock, and
+unlock-then-reload-then-build (sessionStorage persistence). So this is
+NOT a "some call site is missing the header today" bug in the current
+file — every current path is fine.
+
+What WAS a real, confirmed gap
+-------------------------------
+Neither apiGet() nor apiPost() (nor validateStoredDemoKey(), before this
+fix) did anything special with a 401. A 401 only ever meant "this
+particular request failed" to the caller — buildDashboard()'s `.catch`
+shows a generic toast, and nothing re-displays the lock screen or clears
+the now-known-bad stored key. So the ACTUAL failure mode this hardens
+against is a stale key mid-session (the operator rotates
+DEMO_PASSPHRASE, or a session simply outlives the currently-configured
+one) while the tab stays open: every subsequent gated call would keep
+silently failing with a generic error toast, the user would see cards
+never renders / actions "doing nothing", and have no clue why or what to
+do about it — which matches the reported symptom's shape even though the
+originally-suspected cause (a missing header on some call site) was not
+actually present. This is exactly the class of "silent failure" the
+coordinator's message called out, and is worth fixing regardless of the
+exact trigger, since a 401 can appear on ANY gated call at ANY time (key
+rotation, expired demo, etc.), not only immediately after unlocking.
+
+Confirmed via a route-interception test (page.route intercepting
+/api/dashboard to return the exact 401 body app.main._demo_gate_middleware
+sends for a bad key) — see "Validation" below.
+
+Fix
+---
+app/static/index.html, M15 section, around demoGateHeaders()/apiPost()/
+apiGet():
+
+1. New `demoGateQueryParam()` — factors out the EventSource `&k=...`
+   logic (previously an inline `if (demoKey) url += "&k=" + ...` in
+   streamAsk()) so a future second EventSource call site can't forget it.
+
+2. New `handleDemoGateExpiry(status, json)` — on a real 401 (not 429,
+   which is a temporary per-IP lockout unrelated to whether THIS key is
+   valid), clears the in-memory `demoKey` and its sessionStorage entry,
+   re-shows the lock overlay, and sets its error text from the server's
+   message (falling back to the existing "wrong passphrase" i18n string).
+   429 is deliberately left alone — re-locking someone whose key is fine
+   just because of a transient rate-limit would be wrong.
+
+3. New `apiFetch(path, options)` — the ONE place a response's `!resp.ok`
+   is turned into both (a) `handleDemoGateExpiry()` and (b) the thrown
+   Error every existing caller already expects (same shape as before:
+   `err.status`, `err.payload`). `apiPost()` and `apiGet()` are now thin
+   wrappers over `apiFetch()`, so every existing call site (dashboard
+   build, ask, catalog, metrics, health) gets 401-recovery for free with
+   no call-site changes, and any FUTURE endpoint added via apiGet/apiPost
+   automatically inherits both the header and the 401 handling — it is no
+   longer possible to add a new gated call that forgets either.
+
+4. `validateStoredDemoKey()` (the boot-time "is my stored key still
+   good?" check) simplified to call `apiGet("/api/metrics")` instead of
+   its own raw fetch + duplicate clear-and-relock logic — that logic now
+   lives once, in `handleDemoGateExpiry()`.
+
+The demo-lock-form's own candidate-testing fetch (line ~2589, testing a
+just-typed passphrase that ISN'T the trusted `demoKey` yet) is
+deliberately left as its own raw fetch: it must send the CANDIDATE value,
+not `demoGateHeaders()`'s stored one, and its 401/429 branches already
+show distinct, purpose-built messages ("wrong passphrase" vs "too many
+attempts, wait") — routing it through the generic 401 handler would only
+duplicate/confuse that existing, correct logic.
+
+Validation
+----------
+- `python -m pytest -q` -> 433 passed (unchanged; frontend-only fix).
+- App restarted: `DEMO_PASSPHRASE="open sesame demo" AGENT_LLM=keyword
+  AGENT_DB=duckdb`, port 8130. `/health` confirmed `"locked": true`.
+- Full matrix (Playwright, scratchpad m15_full_validation.py), exactly as
+  requested:
+    1. fresh load -> lock overlay showing.                           OK
+    2. unlock with the passphrase -> overlay hides.                  OK
+    3. Build top-12 KPI dashboard -> 12 cards render.                OK
+    4. reorder + close a card + switch a chart type -> 11 cards.     OK
+    5. Reset layout -> restored to 12 cards, defaults.               OK
+    6. Catalog drawer opens.                                         OK
+    7. "KPI dashboard for the last 3 months" chip (M11 filtered
+       dashboard, one-sentence natural-language build) -> filter
+       chip shown, cards render.                                     OK
+    8. Chat question ("Which channel has the best D30 retention?")
+       answered normally.                                            OK
+  Every /api/* request captured during the run carried a 200 status; both
+  GET/POST calls carried `X-Demo-Key`, and both EventSource
+  (/api/ask/stream) calls carried the key as `&k=...`, never as a header
+  (as designed — EventSource cannot set headers). Zero console/page
+  errors throughout.
+- Stale-key simulation (scratchpad m15_stale_key.py): after a normal
+  successful unlock and a working "Build top-12", intercepted the NEXT
+  `/api/dashboard` call with `page.route()` to return exactly what
+  `app.main._demo_gate_middleware` sends for a bad/expired key (HTTP 401,
+  `{"error":"locked","message":"..."}`), then clicked "Build top-12" again.
+  Result: the lock overlay re-appeared automatically, showing the
+  server's message as the error text, and `sessionStorage`'s stored key
+  was confirmed cleared (`null`) — a subsequent reload would stay locked
+  rather than silently re-trusting a bad key. Before this fix this same
+  scenario would have shown only a generic error toast with the grid
+  staying empty and the lock screen never reappearing.
+
+Screenshots
+-----------
+- reports/m15_gate_unlocked.png — lock overlay hidden immediately after a
+  successful unlock.
+- reports/m15_gate_build_top12.png — the top-12 KPI grid fully rendered
+  (12 cards) while the demo gate is active/unlocked ("Demo" badge visible
+  in the header).
+- reports/m15_gate_catalog.png — the data catalog drawer open under the
+  gate.
+- reports/m15_gate_relock_stale_key.png — the lock overlay automatically
+  re-shown, with the "This is a private demo..." error message, after a
+  simulated stale-key 401 on a gated call.
+
+Changed files
+-------------
+- app/static/index.html only:
+    - `demoGateQueryParam()` — new, factors out the EventSource `&k=...`
+      construction (previously inlined in `streamAsk()`).
+    - `handleDemoGateExpiry(status, json)` — new: 401 -> clear stored key
+      + re-show lock screen + set its error text; 429 left untouched.
+    - `apiFetch(path, options)` — new: the single response-handling
+      primitive now used by both `apiPost()` and `apiGet()`.
+    - `apiPost()` / `apiGet()` — now thin wrappers over `apiFetch()`
+      (same external signature/behavior for every existing caller).
+    - `validateStoredDemoKey()` — simplified to call `apiGet()` instead of
+      duplicating the clear-and-relock logic inline.
+    - `streamAsk()`'s EventSource URL construction — now calls
+      `demoGateQueryParam()` instead of an inline `if (demoKey) ...`.
+
+No backend files changed; no config/docs changes; pytest baseline
+unchanged at 433.
+
+
+M16 — "Clear dashboard" semantics + shortened catalog comments
+==================================================================
+
+1) Reset layout -> Clear dashboard (semantics change)
+-------------------------------------------------------
+User's explicit expectation: clicking the link must clear the ENTIRE
+dashboard back to the empty state — every card (board-built AND ad-hoc
+chat cards), all chart instances disposed, board-state localStorage
+cleared, the M11 filter chip cleared, and the empty-state placeholder
+shown. The previous (M14-fix) behavior only reset order/closed/chartType
+and redrew the same board cards, or — when no board had ever been built —
+cleared just the ad-hoc cards; a user who built the top-12 board, added an
+ad-hoc chart, then clicked it, saw only the ad-hoc card disappear and the
+12 board cards stay, which they correctly reported as still broken
+relative to what they now say the button should do.
+
+Fix (app/static/index.html):
+  - `resetBoardLayout()` renamed to `clearDashboard()` and rewritten to
+    unconditionally: reset `boardState` to defaults + persist it, set
+    `lastDashboardCards = null` (so a stale board can never reappear
+    behind the now-empty grid), dispose every live chart instance, empty
+    `#grid`, call `hideDashFilterChip()`, and show the empty-state
+    placeholder. No more branching on whether a board was ever built —
+    every path now ends at the same fully-empty state.
+  - i18n: the label itself renamed for honesty, since "Reset layout" no
+    longer describes what the button does. `resetLayoutLink` ->
+    `clearDashboardLink`: EN "Reset layout" -> "Clear dashboard", TR
+    "Yerleşimi sıfırla" -> "Panoyu temizle". The button's DOM id
+    (`reset-layout-btn`) and CSS class were left as-is (internal, not
+    user-facing) to minimize blast radius.
+  - Splitter width, theme, and language are untouched, exactly as
+    specified — this function never touched them before and still
+    doesn't.
+
+2) Catalog drawer: first-sentence comments + "More"/"Daha fazla" toggle
+--------------------------------------------------------------------------
+The medallion COMMENT ON texts (medallion.sql) are multi-sentence,
+written for the agent and Databricks' own metadata — left completely
+untouched, per the coordinator's instruction. Only the catalog DRAWER's
+rendering changed: each item now shows just its first sentence, muted
+(--ink-muted, unchanged), followed by an inline "More" toggle in --accent
+that expands the full comment in place; clicking it again collapses back
+to "Less" -> the short form.
+
+Fix (app/static/index.html):
+  - `splitFirstSentence(text)` — splits on the first ". " that looks like
+    a real sentence boundary (period+space followed by a capital letter or
+    "("), trivially robust against abbreviations like "e.g." (typically
+    followed by a lowercase word, so the lookahead doesn't match there).
+    Returns `{first, rest}`; `rest` is "" when the whole comment is
+    already one sentence — verified against the real /api/catalog payload
+    (e.g. "...one row per event. Grain: event. Caveat: ..." splits exactly
+    after "one row per event.").
+  - `buildCatalogCommentHtml(commentText)` — single-sentence comments
+    render unchanged (no toggle, nothing to expand); multi-sentence ones
+    render the short form plus a `.catalog-comment-toggle` span (styled
+    --accent, underlined) carrying the full text as a `data-full`
+    attribute on a paired `.catalog-comment-text` span.
+  - Wiring: each toggle's click handler calls `e.stopPropagation()` before
+    swapping text/label — required because `.catalog-item` (the whole card)
+    is itself a clickable `<button>` that inserts the table name into the
+    chat input; without stopping propagation, clicking "More" would also
+    insert the name. Confirmed via the chat input's value staying empty
+    after a toggle click in validation.
+  - New i18n keys `catalogCommentMore`/`catalogCommentLess`: EN "More"/
+    "Less", TR "Daha fazla"/"Daha az".
+  - No backend/`/api/catalog` change was needed — the payload shape was
+    already exactly `{name, comment}` per table; the split is purely a
+    display-layer concern.
+
+Validation
+----------
+- `python -m pytest -q` -> 433 passed (unchanged; frontend-only changes).
+- App run on port 8130 with the demo gate on (`DEMO_PASSPHRASE="open
+  sesame demo"`), exactly as the coordinator specified.
+- Playwright (scratchpad m16_validate.py): unlock -> build top-12 (12
+  cards) -> ask an ad-hoc chart question (13 cards) -> apply the "KPI
+  dashboard for the last 3 months" filtered dashboard (chip shown, cards
+  replaced) -> click "Clear dashboard" (confirmed label text) -> grid back
+  to 0 cards / the empty-state placeholder, filter chip hidden,
+  `funnelCopilotBoard_v1` back to `{"order":[],"closed":[],"chartType":{}}`.
+  Then opened the catalog drawer: first item's comment shows only its
+  first sentence with a working "More" toggle; clicking it reveals the
+  full multi-sentence comment and flips the toggle to "Less" (clicking
+  again correctly collapses back); the chat input stayed empty throughout
+  (toggle clicks do not leak into the insert-name behavior). Zero
+  console/page errors throughout.
+
+Screenshots
+-----------
+- reports/m16_clear_dashboard_before.png — top-12 + ad-hoc + filtered
+  dashboard state, filter chip "Last 3 months" visible, button already
+  reading "Clear dashboard".
+- reports/m16_clear_dashboard_after.png — grid fully empty (placeholder
+  text shown), filter chip gone.
+- reports/m16_catalog_short.png — catalog drawer with one-sentence
+  comments and "More" links.
+- reports/m16_catalog_expanded.png — first item expanded via "More",
+  showing the full comment and the "Less" toggle.
+
+Changed files
+-------------
+- app/static/index.html only:
+    - `resetBoardLayout()` -> renamed `clearDashboard()`, rewritten to
+      always fully clear the dashboard (see above); its one call site
+      (the button's click listener) updated to match.
+    - i18n: `resetLayoutLink` -> `clearDashboardLink` (EN/TR text updated
+      to "Clear dashboard"/"Panoyu temizle"); new `catalogCommentMore`/
+      `catalogCommentLess` keys (EN/TR).
+    - New `splitFirstSentence()` and `buildCatalogCommentHtml()` helpers;
+      `renderCatalogPanel()` updated to use the latter for each item's
+      comment and to wire up the new toggle's click handler.
+    - New `.catalog-comment-toggle` CSS rule (--accent, underlined).
+
+No backend files changed (medallion.sql comments untouched, per
+instruction); pytest baseline unchanged at 433.
+
+
+M17 — Richer, engineer-voiced trace step labels
+==================================================
+
+User request: the live agent trace should narrate like an engineer at
+work ("Writing SQL", "Executing SQL") rather than generic labels
+("Planning" / "Fetching metric: ..." / "Writing answer"). Relabel every
+SSE-mapped trace step (EN + TR) and, where the architecture already
+distinguishes a step's start from its completion, flip the label from a
+pending to a done form.
+
+Label changes (app/static/index.html, i18n dicts, EN -> TR):
+  event                    | old label            | new label
+  -------------------------|-----------------------|---------------------------------------------
+  plan                     | Planning              | Planning the approach / Yaklaşım planlanıyor
+  tool_call get_schema     | Reading schema        | Inspecting the schema / Şema inceleniyor
+  tool_call search_knowledge| Searching knowledge  | Searching the knowledge base / Bilgi tabanında
+                            |                       | aranıyor (TR text already matched; EN updated)
+  tool_call get_metric     | Fetching metric: <key>| Running governed KPI: <key> / Onaylı KPI
+                            |                       | çalıştırılıyor: <key>
+  tool_call+sql run_sql    | Running SQL (never    | PENDING "Writing SQL"/"SQL yazılıyor" ->
+                            | flipped)              | DONE "Executed SQL"/"SQL çalıştırıldı" on its
+                            |                       | tool_result (new: see below)
+  retry                    | Fixing query          | Fixing the SQL and retrying / SQL düzeltilip
+                            |                       | yeniden deneniyor
+  tool_call build_dashboard| Building dashboard    | PENDING "Building the dashboard"/"Dashboard
+    (agentic path)         |  (never flipped)      | kuruluyor" -> DONE "Dashboard built"/"Dashboard
+                            |                       | kuruldu" on its tool_result (new)
+  dashboard event           | Building dashboard   | rendered directly as the DONE label
+    (keyless/deterministic |  (never flipped;      | ("Dashboard built"/"Dashboard kuruldu") since
+    path, no call_id)      |  misleading — by the  | this event only fires once the dashboard is
+                            |  time it appeared the | already fully built — there is no real pending
+                            |  dashboard was done)  | phase on this path to show
+  context                  | Using context from    | Recalling context / Bağlam hatırlanıyor
+                            | previous question     |
+  answer                   | Writing answer        | Writing the answer / Cevap yazılıyor (no flip:
+                            |                       | this step is only ever added once the answer
+                            |                       | has already arrived — 120ms before the trace
+                            |                       | collapses into the final bubble — so there is
+                            |                       | no genuine pending phase to flip from; kept as
+                            |                       | a single label per the coordinator's own
+                            |                       | "don't restructure" allowance)
+
+Mechanism for the two new pending->done flips (run_sql, build_dashboard):
+  - `addStep(opts)` gained an optional `opts.doneLabel`, stashed as
+    `step.dataset.doneLabel` on the rendered element — costs nothing for
+    every other step, which simply never sets it.
+  - `markDone(callId, secs)` (already called on every "tool_result" event)
+    now also checks for that stashed `doneLabel` and, when present,
+    overwrites the step's `.trace-label` text — in addition to its
+    existing job (adding the "done" class + the secs badge, both
+    unchanged).
+  - build_dashboard's existing tool_call handler just gained
+    `doneLabel: t("traceLabelDashboardDone")` — it already had a
+    `callId`, so `markDone()` finds and flips it automatically.
+  - run_sql needed one small wiring change: its step has always been
+    rendered by the separate "sql" event (which carries the SQL text) —
+    but that event never carried a `call_id` of its own to key off. Now
+    the preceding "tool_call" event (name === "run_sql") stashes its
+    `call_id` on the trace object (`trace.pendingSqlCallId`); the very
+    next "sql" event consumes it as that step's `callId` (+ its
+    `doneLabel`) and clears the stash. A failed/retried attempt's step
+    (whose tool_call never resolves to a matching tool_result) correctly
+    stays on "Writing SQL" forever, exactly reflecting that it never
+    completed — verified in the synthetic-retry validation below, where
+    the FIRST "Writing SQL" step stays unflipped while the SECOND (retried)
+    attempt's step flips to "Executed SQL".
+  - Icons, secs badges, the retry badge, the SQL disclosure toggle, and
+    the collapse/expand behavior are all completely untouched — only
+    label strings and this one flip mechanism changed.
+
+Validation
+----------
+- `python -m pytest -q` -> 433 passed (unchanged; frontend-only change).
+- App run on port 8130, demo gate on (`DEMO_PASSPHRASE="open sesame demo"`).
+- Real end-to-end run (scratchpad m17_trace_labels.py): unlocked, clicked
+  the "Which channel has the best D30 retention?" chip (the deterministic
+  keyword planner's own real path — no synthetic data). Expanded trace
+  showed exactly `["Planning the approach", "Writing the answer"]` — this
+  demo's `AGENT_LLM=keyword` driver only ever emits `plan`/`answer`
+  (confirmed in src/agent/agentic.py vs app/main.py's keyword branch: the
+  richer `tool_call`/`sql`/`retry`/`context` events are emitted only by
+  the full agentic loop, which needs a real LLM tier behind it — not
+  available in this offline/keyword-only validation environment, same
+  constraint noted in earlier reports). Screenshot:
+  reports/m17_trace_labels_en_metric.png.
+- To exercise every relabeled event type (schema, knowledge, get_metric,
+  the run_sql retry-then-success flip, and the agentic build_dashboard
+  flip) despite that constraint, used the same Playwright
+  `page.route()`-synthetic-SSE-stream technique established in the M14
+  report: intercepted `/api/ask/stream` to serve a hand-built
+  `text/event-stream` body carrying one of every relevant event type, in
+  the server's own documented shape (see src/agent/agentic.py's SSE event
+  docstring and app/main.py's `_sse_event`/`_SSE_DONE_FRAME` framing) —
+  this exercises the real, unmodified `renderTraceEvent`/`addStep`/
+  `markDone`/`collapseTrace` code path end-to-end, only the event SOURCE
+  is synthetic. Result (scratchpad m17_synthetic_trace.py), expanded
+  trace, EN:
+    Planning the approach -> Recalling context -> Inspecting the schema
+    (0.2s) -> Searching the knowledge base: "attribution methodology"
+    (0.3s) -> Running governed KPI: attribution_first_vs_last (0.1s) ->
+    Writing SQL [unflipped — this attempt's tool_result never arrives] ->
+    Fixing the SQL and retrying (retry 1) -> Executed SQL (0.4s)
+    [flipped — the retried attempt's tool_result DID arrive] -> Dashboard
+    built (0.5s) -> Writing the answer
+  and the identical run in TR:
+    Yaklaşım planlanıyor -> Bağlam hatırlanıyor -> Şema inceleniyor (0.2s)
+    -> Bilgi tabanında aranıyor: "attribution methodology" (0.3s) ->
+    Onaylı KPI çalıştırılıyor: attribution_first_vs_last (0.1s) -> SQL
+    yazılıyor -> SQL düzeltilip yeniden deneniyor (deneme 1) -> SQL
+    çalıştırıldı (0.4s) -> Cevap yazılıyor
+  Zero console/page errors in either run.
+
+Screenshots
+-----------
+- reports/m17_trace_labels_en_metric.png — real chip question, genuine
+  keyword-planner trace ("Planning the approach" / "Writing the answer").
+- reports/m17_trace_labels_en_sql.png — synthetic full-event-type trace,
+  EN, expanded: every relabeled step visible including the retry-then-flip
+  SQL sequence and the flipped "Dashboard built".
+- reports/m17_trace_labels_tr.png — the same synthetic trace, TR labels,
+  confirming both the M16 "Panoyu temizle" rename and every M17 label are
+  correctly localized together.
+
+Changed files
+-------------
+- app/static/index.html only:
+    - i18n (EN + TR): `traceLabelPlan`, `traceLabelSchema`,
+      `traceLabelSearching` (EN only), `traceLabelSql`, `traceLabelRetry`,
+      `traceLabelMetric`, `traceLabelContext`, `traceLabelDashboard` text
+      updated; new `traceLabelSqlDone` and `traceLabelDashboardDone` keys.
+    - `addStep(opts)` — new optional `opts.doneLabel`, stashed as
+      `dataset.doneLabel`.
+    - `markDone(callId, secs)` — now also flips `.trace-label` text when
+      the step carries a stashed `doneLabel`.
+    - `renderTraceEvent()` — build_dashboard's tool_call now passes
+      `doneLabel`; run_sql's tool_call now stashes `trace.pendingSqlCallId`
+      instead of being a no-op; the "sql" event now consumes that stash as
+      its `callId`/`doneLabel` instead of rendering a bare, never-flipped
+      step.
+    - The keyless/deterministic `dashboard` event's own inline
+      `build_dashboard` step (no call_id) now renders directly with the
+      DONE label, since that event only ever fires once the dashboard is
+      already built.
+
+No backend files changed; pytest baseline unchanged at 433.
