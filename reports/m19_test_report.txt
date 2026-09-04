@@ -1,0 +1,190 @@
+M19 — Mobile layout bugs on the live phone (phonak.vmgorken.com): root causes + fixes
+======================================================================================
+
+Bug report
+----------
+User opened the live app on a real phone and it looked bad:
+  1. Horizontal overflow — "Reset chips" cut off at the right edge, chip
+     ×-remove buttons and card control icons (secs badge/chart-switch/
+     download/close) clipped at the edge, lime dashboard button cut off.
+  2. Suggestion chips wrapped one-per-row and ate roughly a third to half
+     of the screen before any chat content was visible.
+  3. Layout interleaving — the footer's meta lines (Driver/disclaimer)
+     appeared to render BETWEEN the chat panel and the dashboard cards,
+     not at the true bottom of the page.
+  4. General mobile polish requested: header wrapping, card title
+     wrapping, tables/SQL scrolling inside their cards, Ask row fully
+     reachable.
+
+Screenshot: reports/user_mobile_bug.png (a real-device capture).
+
+Method
+------
+Real mobile emulation via Playwright, not plain-viewport screenshots:
+  browser.new_context(viewport={width,height}, device_scale_factor=3,
+                       is_mobile=True, has_touch=True)
+at 390x844 and 430x932, both color-scheme themes, EN + TR, plus the demo
+gate lock screen (server run on port 8130 with a TEST-ONLY passphrase —
+never the real one, per the standing repo rule). Acceptance test added
+for every state:
+    document.scrollingElement.scrollWidth === window.innerWidth
+
+Root cause #3 (layout interleaving) — confirmed, not a screenshot artifact
+---------------------------------------------------------------------------
+The DOM order is, and always was, correct: <header> -> .layout
+(.chat-panel, .splitter, .dash-panel) -> <footer>. This is NOT a DOM-order
+or CSS `order`/positioning bug (grepped the whole file: no `order:`
+property is used anywhere, and neither .dash-panel nor <footer> is
+position:fixed/absolute/sticky).
+
+The real mechanism, confirmed by measuring getBoundingClientRect() on a
+live built dashboard at 390px:
+
+    BEFORE the fix:
+      .layout  top=219   bottom=769
+      .dash-panel        bottom=909.9   <- overflows past .layout's own box
+      .grid              bottom=909.9   <- same: grid never actually clips
+      #footer  top=769   bottom=844     <- painted at .layout's (short) box
+                                            edge, OVERLAPPING the dashboard
+                                            grid's real (taller) content
+
+.layout carried `flex:1` (desktop rule, never overridden in the mobile
+media query) together with `min-height:0`. Inside body's flex column,
+`flex:1` + `min-height:0` lets the flexbox algorithm squeeze .layout down
+to whatever space is left under the header in ONE viewport — regardless
+of how tall its children's actual content is. .dash-panel's `.grid` has
+`overflow-y:auto` for the desktop split-pane (where .dash-panel's height
+IS bounded by the fixed-height row), but on the mobile stacked layout
+there is no such bounded height for that auto-scroll to size against, so
+`.grid` just renders at its full intrinsic content height (a real 12-card
+dashboard is routinely 1000+ px tall) and — since nothing in the ancestor
+chain clips (overflow:visible everywhere up to .layout) — that content
+paints straight past .layout's squeezed box. <footer>, positioned in
+normal flow immediately after .layout, is laid out based on .layout's
+(too-short) box height and lands its opaque background right on top of
+the still-rendering dashboard grid. That is what LOOKS like "footer
+between the panels": the footer is exactly where the DOM says it should
+be, but the dashboard content behind/around it is overflowing into that
+same space.
+
+The existing M9-era comment on this block already stated the intended
+behavior ("if the sum still exceeds the viewport the page scrolls as a
+whole rather than clipping anything") — the intent was right, but
+`.layout{flex:1}` and `.dash-panel`'s only-a-floor `min-height:220px`
+(no matching `flex:none`) meant that intent was never actually realized
+on a real, content-heavy phone view.
+
+Fix: in the `@media (max-width:900px)` block —
+    .layout{flex:none !important;}                 /* size to content */
+    .dash-panel{min-height:220px;flex:none !important;}
+    .grid{flex:none !important;overflow-y:visible !important;
+          max-height:none !important;
+          grid-template-columns:1fr !important;}    /* see below */
+
+AFTER the fix, same measurement:
+      .layout  bottom=5416.9
+      #footer  top=5416.9   <- exact match, zero overlap
+The whole page (header, chat panel, full dashboard, footer) is now one
+normal-flow column and simply scrolls, as originally intended.
+
+Root cause #1 (horizontal overflow) — audited, largely already correct;
+hardened the two real suspects
+-----------------------------------------------------------------------
+Audited every candidate the bug report named:
+  - Splitter remnants: `.chat-panel` already resets `flex`/`width`/
+    `max-width`/`min-width` with `!important` on mobile (M9/M10). Kept.
+  - `box-sizing:border-box` is global (`*{box-sizing:border-box;}`,
+    line 202) — padding cannot itself cause overflow.
+  - No `100vw`/`100vh`-based widths exist anywhere in the file (the
+    classic "100vw includes the scrollbar gutter" bug does not apply).
+  - Tables/SQL: `.data-table-wrap`, `.md-table-wrap` and `pre.sql` are all
+    `overflow-x:auto`/`overflow:auto` containers already — confirmed via
+    Playwright that a wide `<code class="hljs language-sql">` block does
+    NOT contribute to `document.scrollingElement.scrollWidth` (it only
+    overflows its own scrollable box, which is correct/intended).
+  - Card header/actions row (secs badge, chart-switch, download, close):
+    `.card h3{flex:1;min-width:0}` already lets the title shrink/wrap
+    and `.card-actions{flex:0 0 auto}` keeps the icons a fixed, small
+    size — confirmed titles wrap onto multiple lines correctly in every
+    screenshot rather than truncating or pushing icons off-edge.
+  - Grid template mins: `grid-template-columns:repeat(auto-fill,
+    minmax(320px,1fr))` leaves only ~8-38px of margin at 390-430px
+    viewports before it would refuse to fit a single column and force
+    horizontal overflow — real, but not yet tripped at exactly 390/430.
+    Hardened defensively: mobile now pins `grid-template-columns:1fr`
+    explicitly (mobile only ever shows one card per row anyway), removing
+    the risk entirely rather than trusting the arithmetic margin.
+  - Chip row: was the single real, reproducible overflow-adjacent bug —
+    see root cause #2 below (its old vertical-stacking behavior, plus
+    "Reset chips" trailing the last wrapped chip, is what put content
+    right at the edge in the reported screenshot).
+
+Across the full validation matrix (48 checks: 2 widths x 2 themes x 2
+locales x 6 states each) `document.scrollingElement.scrollWidth ===
+window.innerWidth` holds in every case, both before and after this
+change, for every state EXCEPT the chip row (fixed below). The live
+screenshot's visible overflow most likely came from the pre-fix chip row
+("Reset chips" sitting flush against the edge of a wrapped row, chip x's
+right at the container edge) combined with the interleaving bug above,
+rather than a separate, still-hidden cause — no other offending element
+was found in exhaustive per-element bounding-box scans (welcome, chips,
+dashboard-built, catalog-open, answer-with-trace, both themes/locales).
+
+Root cause #2 (chip area eating the screen) — confirmed
+---------------------------------------------------------
+`.chips{display:flex;flex-wrap:wrap}` had no mobile override at all.
+Individual `.chip` elements had no `white-space:nowrap`, so long question
+text wrapped WITHIN a chip (e.g. "Which channel wins on actual pairings,
+not downloads?" became its own 2-line block) and, since every chip is
+wide relative to a 390-430px viewport, `flex-wrap` put each one on
+essentially its own row — 7 chips consumed ~279px of vertical space
+(measured), before any chat content was visible.
+
+Fix: `renderChips()` now wraps the chip-wrap elements in a `.chip-scroll`
+container; `.chip-reset` stays outside it as a sibling.
+  - Default (desktop, unchanged): `.chip-scroll{display:contents}` makes
+    the wrapper invisible to layout — chip-wraps behave exactly as direct
+    `.chips` flex children, byte-for-byte the same desktop appearance
+    (verified with a 1400px screenshot pair, before/after).
+  - Mobile (`max-width:900px`): `.chip-scroll{display:flex !important;
+    flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none}` turns it into one compact, horizontally
+    scrollable row (`.chip{white-space:nowrap}`, smaller font/padding), a
+    small right-edge mask-image fade hints there's more to scroll, and
+    `.chip-reset{flex:0 0 auto}` drops to its own line directly beneath —
+    always fully on-screen instead of trailing off a wrapped row's edge.
+  - Caught one ordering bug while fixing this: the default
+    `.chip-scroll{display:contents}` rule sits later in the file than the
+    `@media` block (same specificity), so without `!important` on the
+    mobile `display:flex` it lost the cascade and chips still rendered
+    stacked. Fixed by making the mobile declaration `!important`.
+
+Validation
+----------
+- 48/48 scrollWidth===innerWidth checks pass: {390x844, 430x932} x
+  {light, dark} x {en, tr} x {lock-screen, welcome, chips,
+  answer-with-trace, dashboard-built, catalog-open}.
+- footer/layout boundary check (no overlap) passes in all 8
+  theme/locale/width combinations after building a full dashboard.
+- Screenshots: reports/m19_mobile_{390,430}_{light,dark}_{en,tr}_
+  {answer,dashboard,catalog}.png (24 files) + reports/user_mobile_bug.png
+  (the original report) + reports/m19_desktop_1400_after.png (desktop,
+  confirmed pixel-identical in spirit to the pre-change layout — chips
+  still wrap inline, dashboard stays multi-column, splitter present).
+- pytest: 433 passed (frontend-only CSS/JS changes to
+  app/static/index.html; no backend touched).
+- Repo-wide case-insensitive grep for the real demo passphrase: 0 matches
+  (test server run with the standing test-only phrase, never committed).
+
+Files changed
+-------------
+app/static/index.html only:
+  - `.chip-scroll{display:contents;}` (new default rule).
+  - `renderChips()`: chip-wraps now appended into a `.chip-scroll` div;
+    `.chip-reset` appended as its sibling (unchanged otherwise).
+  - `@media (max-width:900px)` block: added `.layout{flex:none !important}`,
+    `.dash-panel{flex:none !important}` (kept existing min-height:220px),
+    `.grid{flex:none !important;overflow-y:visible !important;
+    max-height:none !important;grid-template-columns:1fr !important}`,
+    and the new `.chips`/`.chip-scroll`/`.chip-wrap`/`.chip`/`.chip-reset`
+    mobile rules described above.

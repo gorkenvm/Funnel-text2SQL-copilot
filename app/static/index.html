@@ -448,7 +448,31 @@
   .splitter.dragging .splitter-grip{color:var(--accent);}
 
   @media (max-width:900px){
-    .layout{flex-direction:column;}
+    .layout{
+      flex-direction:column;
+      /* M19: .layout previously kept `flex:1` (inherited from the desktop
+         rule), which — combined with `min-height:0` — let the flexbox
+         algorithm squeeze .layout to whatever space was left under the
+         header, regardless of how tall its children's actual content was.
+         .dash-panel's real content (a built 12-card grid) is routinely
+         far taller than that squeezed box; since .layout never clips
+         (overflow:visible, no `.dash-panel`/`.grid` scroll container has a
+         bounded height to make its own `overflow-y:auto` do anything),
+         the excess simply painted past .layout's bottom edge — landing on
+         top of <footer>, which is positioned in normal flow right after
+         .layout's (too-short) box. That is the root cause of "the footer
+         renders between the chat panel and the dashboard cards": it isn't
+         a DOM-order bug (the markup is header -> .layout -> footer, and
+         .layout's own children are chat-panel then dash-panel, exactly as
+         intended) — .dash-panel's content was rendering behind/through
+         the footer's solid background because .layout's box ended above
+         it. `flex:none` makes .layout size to its content's real height
+         instead of a flex-distributed share of the viewport, so the whole
+         page — header, chat panel, full dashboard, footer — is one normal
+         column and the page scrolls as a unit, exactly as the M9 comment
+         below already intended but the still-present `flex:1` prevented. */
+      flex:none !important;
+    }
     .splitter{display:none;}
     /* !important: overrides any inline width the splitter drag persisted
        for the desktop layout — a stale px value must never survive onto
@@ -461,8 +485,58 @@
        the footer and became unclickable. A trimmed chat-panel cap plus a
        toolbar-sized floor here keeps every control reachable; if the sum
        still exceeds the viewport the page scrolls as a whole rather than
-       clipping anything. */
-    .dash-panel{min-height:220px;}
+       clipping anything. M19: that last sentence needed `.layout`,
+       `.dash-panel` and `.grid` to actually stop being flex-squeezed
+       (see above and below) for it to hold true on real phones. */
+    .dash-panel{min-height:220px;flex:none !important;}
+    /* M19: .grid's desktop `flex:1;overflow-y:auto` makes it its own
+       scrollable pane sized to whatever height .dash-panel is given —
+       exactly right for the desktop split view, but on mobile there is no
+       such bounded height to size against (see .layout above), so the
+       grid must instead size to its content and let the page scroll. */
+    .grid{flex:none !important;overflow-y:visible !important;max-height:none !important;
+      /* Suspect #4 from the audit ("grid template mins"): auto-fill with a
+         320px column minimum leaves only ~8-38px of margin before it would
+         refuse to fit a single narrow phone viewport and force horizontal
+         overflow. Mobile only ever shows one card per row anyway, so pin
+         it explicitly instead of trusting that arithmetic. */
+      grid-template-columns:1fr !important;
+    }
+
+    /* M19: chip row — Problem #2. Desktop's flex-wrap stacks every chip
+       (plus any that wrap onto a second internal line, e.g. a long
+       question) as near-full-width rows, eating roughly a third to half
+       of a phone screen before any chat content is visible. On mobile the
+       chip-wraps (inside .chip-scroll, see JS renderChips()) become one
+       compact, horizontally-scrollable strip instead; .chip-reset drops
+       to its own line directly under it so it's always fully on-screen
+       rather than trailing off the edge of the last wrapped row. */
+    .chips{
+      flex-wrap:wrap;
+      padding:6px var(--space-2) 8px;
+    }
+    .chip-scroll{
+      display:flex !important;
+      flex-wrap:nowrap;
+      align-items:center;
+      gap:6px;
+      flex:1 1 100%;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-width:none;
+      padding-bottom:2px;
+      /* Small right-edge fade hinting there's more to scroll to. */
+      -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent 100%);
+      mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent 100%);
+    }
+    .chip-scroll::-webkit-scrollbar{display:none;}
+    .chip-wrap{flex:0 0 auto;}
+    .chip{
+      font-size:.74rem;
+      padding:6px 20px 6px 10px;
+      white-space:nowrap;
+    }
+    .chip-reset{flex:0 0 auto;margin-top:2px;}
   }
 
   /* ---------- chat panel ---------- */
@@ -474,6 +548,11 @@
     padding:var(--space-2);
     border-bottom:1px solid var(--border);
   }
+  /* M19: wraps the .chip-wrap items only (not .chip-reset). `display:contents`
+     makes it invisible to layout on desktop — its children act as direct
+     .chips flex items exactly as before this wrapper existed. The mobile
+     breakpoint below turns it into the actual scrollable strip. */
+  .chip-scroll{display:contents;}
   .chip-wrap{
     position:relative;
     display:inline-flex;
@@ -2152,6 +2231,13 @@
 
   function renderChips(){
     els.chips.innerHTML = "";
+    // M19: chip-wraps live inside a .chip-scroll wrapper so the mobile
+    // breakpoint can turn just this part into one horizontally-scrollable
+    // row while .chip-reset stays outside it (always visible, own line).
+    // `display:contents` (default CSS) keeps desktop's flat flex-wrap
+    // layout byte-for-byte unchanged.
+    var scroll = document.createElement("div");
+    scroll.className = "chip-scroll";
     currentChipList(LANG).forEach(function(q){
       var wrap = document.createElement("span");
       wrap.className = "chip-wrap";
@@ -2172,8 +2258,9 @@
       });
       wrap.appendChild(chip);
       wrap.appendChild(rm);
-      els.chips.appendChild(wrap);
+      scroll.appendChild(wrap);
     });
+    els.chips.appendChild(scroll);
     var reset = document.createElement("button");
     reset.type = "button";
     reset.className = "chip-reset";

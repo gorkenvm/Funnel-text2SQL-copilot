@@ -146,10 +146,26 @@ sudo dpkg -i cloudflared.deb
 
 ### 4.2 Mevcut tünelinizi kullanma (önerilen) vs. yeni tünel
 
-**`vmgorken.com` için zaten çalışan bir tünel varsa**, yeni bir tünel
-açmayın — sadece o tünelin `~/.cloudflared/config.yml` dosyasına bir
-ingress kuralı ekleyin (4.3'e geçin, `<TUNNEL_ID>` zaten bildiğiniz
-değer).
+**ÖNCE tünelinizin nasıl yönetildiğine bakın** — iki mod var ve adımlar
+tamamen farklı:
+
+- **Token ile çalışan (dashboard'dan yönetilen) tünel** — cloudflared
+  `--token ...` argümanıyla (genelde bir container olarak) çalışıyorsa
+  `config.yml` OKUNMAZ; 4.3'ü atlayın. Rota Cloudflare **Zero Trust →
+  Networks → Tunnels → tüneliniz → Public Hostname / Published
+  application → Add** ekranından eklenir: Subdomain `phonak`, Domain
+  `vmgorken.com`, Service Type `HTTP`, URL = **uygulama container'ının
+  adı**, ör. `http://phonak_copilot:8000` (cloudflared da bir container
+  olduğundan `localhost` ONUN kendi localhost'udur, host'a gitmez —
+  uygulama container'ı cloudflared ile aynı docker ağına eklenmiş
+  olmalı). DNS kaydı bu ekrandan otomatik oluşur; 4.4 gerekmez.
+  ⚠ Tünel token'ı herhangi bir komut çıktısına yazıldıysa işi bitirince
+  aynı ekrandan **Rotate token** yapın.
+
+- **`config.yml` ile çalışan (yerel yönetimli) tünel** — 4.3 ve 4.4
+  aynen geçerli; mevcut tünele tek ingress kuralı ekleyin.
+
+**Hiç tünel yoksa**, önce oluşturun:
 
 **Hiç tünel yoksa**, önce oluşturun:
 
@@ -173,6 +189,10 @@ credentials-file: /home/<kullanici>/.cloudflared/<TUNNEL_ID>.json
 
 ingress:
   - hostname: phonak.vmgorken.com
+    # cloudflared HOST üzerinde çalışıyorsa localhost doğrudur;
+    # bir CONTAINER olarak çalışıyorsa uygulama container'ının adını
+    # kullanın (http://phonak_copilot:8000) ve iki container'ı aynı
+    # docker ağına koyun.
     service: http://localhost:8000
   # ... vmgorken.com için zaten var olan diğer ingress kurallarınız ...
   - service: http_status:404
