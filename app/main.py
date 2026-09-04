@@ -145,7 +145,7 @@ app.add_middleware(
     allow_origins=[
         "https://vmgorken.com",
         "https://www.vmgorken.com",
-        "https://phonak.vmgorken.com",
+        "https://funnel.vmgorken.com",
     ],
     allow_origin_regex=r"http://localhost(:\d+)?",
     allow_credentials=False,

@@ -3,14 +3,14 @@
 Bu rehber, Phonak Funnel Copilot web uygulamasını (M2) sıfırdan ayağa
 kaldırmak için adım adım, kopyala-yapıştır çalıştırılabilir talimatlar
 içerir. Sırasıyla: lokal çalıştırma, Docker ile çalıştırma, Cloudflare
-Tunnel ile `phonak.vmgorken.com` adresine bağlama, `ANTHROPIC_API_KEY`
+Tunnel ile `funnel.vmgorken.com` adresine bağlama, `ANTHROPIC_API_KEY`
 verme ve Databricks'e geçiş.
 
 Tüm komutlar repo kök dizininden (`sonova_case/`) çalıştırılmalıdır.
 
 > **M18 notu:** Gerçek VPS prodüksiyon dağıtımı (kullanıcının kendi
 > makinesinden `ssh vps` ile uyguladığı, Cloudflare Tunnel ile
-> `phonak.vmgorken.com`'a bağlanan güncel akış) için
+> `funnel.vmgorken.com`'a bağlanan güncel akış) için
 > **[docs/deploy_runbook_vps.md](deploy_runbook_vps.md)** dosyasına
 > bakın — `env_file: .env`, salt-loopback port bağlama (`127.0.0.1:8000`)
 > ve `datagen` profiliyle güncellenmiş `Dockerfile`/`docker-compose.yml`'i
@@ -91,7 +91,7 @@ Doğrulama aynı `curl` komutlarıyla yapılabilir (Bölüm 1).
 
 ---
 
-## 3. Cloudflare Tunnel ile `phonak.vmgorken.com` rotası ekleme
+## 3. Cloudflare Tunnel ile `funnel.vmgorken.com` rotası ekleme
 
 Bu bölüm genel bir talimattır; DNS ve Cloudflare hesabı erişiminin
 zaten mevcut olduğu varsayılır.
@@ -127,7 +127,7 @@ tunnel: <TUNNEL_ID>
 credentials-file: /home/<kullanici>/.cloudflared/<TUNNEL_ID>.json
 
 ingress:
-  - hostname: phonak.vmgorken.com
+  - hostname: funnel.vmgorken.com
     service: http://localhost:8000
   - service: http_status:404
 ```
@@ -141,7 +141,7 @@ makinede çalışıyorsa `http://localhost:8000` doğru hedeftir (port
 ### 3.4 DNS rotasını bağlama ve tüneli başlatma
 
 ```bash
-cloudflared tunnel route dns phonak-funnel-copilot phonak.vmgorken.com
+cloudflared tunnel route dns phonak-funnel-copilot funnel.vmgorken.com
 
 # ön planda test için:
 cloudflared tunnel run phonak-funnel-copilot
@@ -154,10 +154,10 @@ sudo systemctl enable --now cloudflared
 Doğrulama:
 
 ```bash
-curl -s https://phonak.vmgorken.com/health | python3 -m json.tool
+curl -s https://funnel.vmgorken.com/health | python3 -m json.tool
 ```
 
-`app/main.py` içindeki CORS ayarları zaten `https://phonak.vmgorken.com`,
+`app/main.py` içindeki CORS ayarları zaten `https://funnel.vmgorken.com`,
 `https://vmgorken.com`, `https://www.vmgorken.com` ve
 `http://localhost:*` origin'lerine izin verir; ek bir yapılandırma
 gerekmez.
@@ -720,7 +720,7 @@ kullanıcıya hiç yansıtmadan çözüyor.
 
 ## 9. Demo kapısı (M13) — genel erişime açık dağıtım için isteğe bağlı parola
 
-Genel internete açık bir dağıtımda (ör. `phonak.vmgorken.com`) API'nin
+Genel internete açık bir dağıtımda (ör. `funnel.vmgorken.com`) API'nin
 maliyetini ve gereksiz kullanımını sınırlamak için, hafif bir sunucu
 taraflı "demo kapısı" eklenebilir. Varsayılan olarak **kapalıdır** —
 hiçbir şey ayarlamazsanız uygulama bugünkü gibi çalışmaya devam eder,

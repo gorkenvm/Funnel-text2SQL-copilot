@@ -2,7 +2,7 @@
 
 Bu runbook, Phonak Funnel Copilot'u kendi VPS'inize (`ssh vps` ile
 eriştiğiniz makine) dağıtmak için baştan sona, kopyala-yapıştır
-çalıştırılabilir talimatlar içerir. Hedef: **phonak.vmgorken.com**
+çalıştırılabilir talimatlar içerir. Hedef: **funnel.vmgorken.com**
 (Cloudflare Tunnel üzerinden). Bu ajan VPS'e SSH ile erişemiyor — aşağıdaki
 her adımı siz `ssh vps` ile bağlanıp kendiniz çalıştırmalısınız.
 
@@ -134,7 +134,7 @@ her zaman ayrı bir volume'dur (Bölüm 3).
 
 ---
 
-## 4. Cloudflare Tunnel: `phonak.vmgorken.com` rotası
+## 4. Cloudflare Tunnel: `funnel.vmgorken.com` rotası
 
 ### 4.1 `cloudflared` kurulumu (yoksa)
 
@@ -188,7 +188,7 @@ tunnel: <TUNNEL_ID>
 credentials-file: /home/<kullanici>/.cloudflared/<TUNNEL_ID>.json
 
 ingress:
-  - hostname: phonak.vmgorken.com
+  - hostname: funnel.vmgorken.com
     # cloudflared HOST üzerinde çalışıyorsa localhost doğrudur;
     # bir CONTAINER olarak çalışıyorsa uygulama container'ının adını
     # kullanın (http://phonak_copilot:8000) ve iki container'ı aynı
@@ -201,7 +201,7 @@ ingress:
 ### 4.4 DNS rotası ve servis olarak başlatma
 
 ```bash
-cloudflared tunnel route dns <TUNNEL_ID> phonak.vmgorken.com
+cloudflared tunnel route dns <TUNNEL_ID> funnel.vmgorken.com
 
 # ön planda test için:
 cloudflared tunnel run <TUNNEL_ID>
@@ -215,10 +215,10 @@ sudo systemctl restart cloudflared   # zaten kuruluysa: restart, ilk kurulumsa: 
 Doğrulama:
 
 ```bash
-curl -s https://phonak.vmgorken.com/health | python3 -m json.tool
+curl -s https://funnel.vmgorken.com/health | python3 -m json.tool
 ```
 
-`app/main.py`'deki CORS ayarları zaten `https://phonak.vmgorken.com`,
+`app/main.py`'deki CORS ayarları zaten `https://funnel.vmgorken.com`,
 `https://vmgorken.com` ve `https://www.vmgorken.com` origin'lerine izin
 verir — ek bir yapılandırma gerekmez.
 
@@ -248,13 +248,13 @@ Bir önceki sürüme dönmek için: `git log --oneline` ile önceki commit'i
 bulun, `git checkout <önceki-commit>`, sonra `docker compose up -d --build`.
 `cloudflared` tüneli konteynerden bağımsız çalıştığı için rollback
 sırasında dokunmanıza gerek yok — tekrar `docker compose up -d --build`
-yapılana kadar `phonak.vmgorken.com` sadece 502/bağlantı hatası verir.
+yapılana kadar `funnel.vmgorken.com` sadece 502/bağlantı hatası verir.
 
 ---
 
 ## 7. Dağıtım sonrası sağlık kontrolü (kontrol listesi)
 
-Tarayıcıda `https://phonak.vmgorken.com` açın ve sırayla doğrulayın:
+Tarayıcıda `https://funnel.vmgorken.com` açın ve sırayla doğrulayın:
 
 - [ ] `DEMO_PASSPHRASE` ayarlıysa: sayfa açılır açılmaz kilit ekranı
       görünür (kadranlar/grafikler görünmeden önce).
@@ -266,6 +266,6 @@ Tarayıcıda `https://phonak.vmgorken.com` açın ve sırayla doğrulayın:
 - [ ] "Top-12 KPI kokpiti kur" butonu 12 kart üretir.
 - [ ] "Son 3 ay için KPI kokpiti" gibi doğal dil filtreli bir soru,
       filtre etiketiyle birlikte kokpiti günceller.
-- [ ] `curl -s https://phonak.vmgorken.com/health` → `"status": "ok"`.
+- [ ] `curl -s https://funnel.vmgorken.com/health` → `"status": "ok"`.
 
 Hepsi geçiyorsa dağıtım tamamdır.
