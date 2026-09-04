@@ -64,7 +64,12 @@ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Networks}}' 2>/
 echo "--- cloudflared details ---"
 docker inspect cloudflared --format 'Networks: {{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || echo "no container named cloudflared"
 docker inspect cloudflared --format 'Mounts: {{range .Mounts}}{{.Source}} -> {{.Destination}} | {{end}}' 2>/dev/null
-docker inspect cloudflared --format 'Cmd: {{join .Config.Cmd " "}}' 2>/dev/null
+# A token-managed tunnel carries its credential in argv, so this line is
+# redacted before it is printed: the whole point of this step is that the
+# output gets pasted somewhere else, and a tunnel token is enough to run
+# traffic for the entire zone. Only the run mode matters for diagnostics.
+docker inspect cloudflared --format 'Cmd: {{join .Config.Cmd " "}}' 2>/dev/null \
+  | sed -E 's/(--token[= ])[A-Za-z0-9._-]+/\1<REDACTED>/g'
 echo
 echo "PHASE 1 DONE: app is up on 127.0.0.1:8000 (locked: check the health JSON above)."
 echo "Paste this whole output back; phase 2 (funnel.vmgorken.com wiring) depends on it."
