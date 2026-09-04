@@ -1,0 +1,216 @@
+M7a test report — sqlglot AST guardrails + model tiers + partial conversation memory + QA-5
+=============================================================================================
+
+Command: python -m pytest -q
+Result:  297 passed in ~15s   (was 222 green before this module; +75 new tests, 0 removed,
+                                0 weakened)
+
+New test files
+  tests/test_model_tiers.py       17 tests — resolve_tier_model/get_model_tiers/get_llm(tier),
+                                              OpenAILLM-per-model caching, /health tiers
+  tests/test_memory.py            21 tests — ConversationMemory (record/retrieve, TTL, LRU),
+                                              is_referential_question, format_context_block
+Updated test files
+  tests/test_guardrails.py        +14 tests — TestSqlglotASTGuardrails (comment/quote
+                                   obfuscation, subquery/join, CTE-hidden INSERT, LIMIT
+                                   capping) + TestSqlglotFallback (legacy-only path)
+  tests/test_agentic.py           +9 tests  — TestConversationMemoryIntegration (context
+                                   event + PRIOR CONTEXT injection, contamination guard,
+                                   memory=off, recording) + 1 QA-5 prompt string-assert
+  tests/test_api.py               +7 tests  — TestAskModelTierAndMemoryParams + health tiers
+  tests/test_api_stream.py        +5 tests  — TestStreamModelTierAndMemoryParams
+  tests/test_llm_provider_selection.py — _clean_env fixture also resets agent.llm's new
+                                   per-model OpenAILLM cache (see "Deviations" below);
+                                   no assertion weakened, one fixture line added.
+
+Full pytest tail (representative slice — new suites)
+-----------------------------------------------------------------------------------------
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_rejects_comment_obfuscated_table_name PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_accepts_double_quoted_known_table PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_rejects_unknown_table_inside_subquery PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_rejects_unknown_table_inside_join PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_accepts_with_cte_wrapped_select PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_rejects_insert PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_rejects_insert_hidden_in_cte_with_returning PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_rejects_multi_statement_select_then_drop PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_enforce_limit_preserves_lower_existing_limit PASSED
+tests/test_guardrails.py::TestSqlglotASTGuardrails::test_enforce_limit_caps_oversized_existing_limit PASSED
+tests/test_guardrails.py::TestSqlglotFallback::test_legacy_only_still_accepts_known_tables PASSED
+...
+tests/test_agentic.py::TestConversationMemoryIntegration::test_referential_question_with_history_injects_context_and_fires_event PASSED
+tests/test_agentic.py::TestConversationMemoryIntegration::test_independent_long_question_is_never_contaminated_by_history PASSED
+tests/test_agentic.py::TestConversationMemoryIntegration::test_memory_off_never_injects_even_when_referential_with_history PASSED
+tests/test_agentic.py::TestConversationMemoryIntegration::test_recording_happens_after_a_successful_answer PASSED
+tests/test_agentic.py::TestSystemPromptQualityRules::test_qa5_requires_linkable_population_caveat PASSED
+...
+tests/test_model_tiers.py::TestGetLlmTierAware::test_openai_llm_caches_per_resolved_model_name PASSED
+tests/test_model_tiers.py::TestHealthReportsTiers::test_health_reports_tiers_and_default_tier PASSED
+============================= 297 passed in 14.84s =============================
+
+-----------------------------------------------------------------------------------------
+1) Adversarial SQL rejection example (verbatim)
+-----------------------------------------------------------------------------------------
+Input (comment-obfuscated table name — the exact case a flat token/regex scanner is
+weakest against, since "FROM" and the table name are split by a /* */ comment):
+
+    SELECT * FROM/**/secret_tbl
+
+>>> validate_sql("SELECT * FROM/**/secret_tbl")
+GuardrailError: I can only query these tables: app_events, bronze.app_events,
+bronze.id_bridge, bronze.web_events, gold.attribution_first_vs_last,
+gold.completion_by_channel, gold.completion_by_channel_device, gold.completion_by_device,
+gold.d30_by_channel, gold.downloads_by_channel, gold.funnel_overview,
+gold.linkable_share_by_market, gold.pairing_by_channel, gold.pairing_by_platform_market,
+gold.step_conversion, gold.weekly_test_starts, id_bridge, silver.app_user_stages,
+silver.linked_journeys, silver.v_attribution_eligible, silver.web_user_stages, web_events.
+Unknown table(s) referenced: secret_tbl.
+
+Caught by the PRIMARY (sqlglot AST) layer: sqlglot's parser treats /* */ as a real
+comment token regardless of where it sits, so it hands back a clean AST with exactly one
+Table node named "secret_tbl" — no obfuscation survives to the whitelist check. The
+secondary (legacy regex) layer, run immediately afterwards as defense-in-depth, agrees
+independently (it also strips comments before tokenizing) — both layers reject.
+
+A second, structurally different adversarial case (also new in this module — the one
+that specifically motivates walking the *whole* AST rather than just checking the
+statement's root node type):
+
+    WITH t AS (INSERT INTO web_events (event_name) VALUES ('x') RETURNING *)
+    SELECT * FROM t
+
+This parses as a single top-level SELECT (would pass a root-node-type-only check!), but
+sqlglot's tree contains an Insert node nested inside the CTE body. validate_sql() walks
+the entire tree (`statement.find_all(forbidden_types)`), finds it, and rejects with:
+"This query contains operations I'm not allowed to run (INSERT). I can only read data
+with SELECT queries." — see tests/test_guardrails.py::TestSqlglotASTGuardrails::
+test_rejects_insert_hidden_in_cte_with_returning.
+
+-----------------------------------------------------------------------------------------
+2) Memory-gate transcript (verbatim, via ScriptedLLM — no network)
+-----------------------------------------------------------------------------------------
+Setup: a ConversationMemory with one prior turn recorded under session "demo-session"
+(question "Where is the biggest drop-off?", tables gold.step_conversion, metric
+step_conversion_rates, result "Highest drop-off: complete -> download at 32%."), then
+AgenticFunnelAgent.run("What about that on mobile?", session_id="demo-session").
+
+=== Referential follow-up (memory=on, has history) ===
+plan   -> {'text': "Planning how to answer: 'What about that on mobile?'"}
+context -> {'text': 'Using context from previous question'}
+answer -> {'answer': 'On mobile it is even higher, about 38%.', 'sql': None, 'rows': [],
+           'chart': None, 'citations': []}
+
+--- system prompt tail (PRIOR CONTEXT block actually sent to the model) ---
+PRIOR CONTEXT (most recent last):
+- Q: 'Where is the biggest drop-off?' | tables: gold.step_conversion | metric:
+  step_conversion_rates | result: Highest drop-off: complete -> download at 32%.
+Use this ONLY if the question refers to it; otherwise ignore.
+
+The "context" event fires right after "plan", exactly once, only because the question
+("What about that...") matched the referential marker "that" AND session "demo-session"
+already had stored history. tests/test_agentic.py::TestConversationMemoryIntegration::
+test_independent_long_question_is_never_contaminated_by_history proves the negative case
+with the same populated session: an unrelated, self-contained question
+("Compare hearing aid pairing rate by acquisition channel across markets") against that
+SAME session gets event sequence ["plan", "answer"] only — no "context" event, and
+"PRIOR CONTEXT" does not appear anywhere in the system prompt sent to the model.
+
+-----------------------------------------------------------------------------------------
+Files changed
+-----------------------------------------------------------------------------------------
+requirements.txt          + sqlglot>=24.0 (installed: sqlglot 30.17.0)
+config/model_tiers.json   new — {"fast": "gpt-4o-mini", "balanced": "gpt-4o", "max": "gpt-4o"}
+src/agent/guardrails.py   validate_sql/enforce_limit rewritten around a primary sqlglot
+                          AST layer + the original regex/token layer kept as secondary
+                          defense-in-depth (also the sole layer if sqlglot is missing —
+                          logged warning); new extract_referenced_tables() helper for
+                          agent.memory. _referenced_tables()'s quote handling fixed so a
+                          double-quoted/backtick-quoted KNOWN table name is read as an
+                          identifier, not blanket-rejected (single-quoted string literals
+                          in table position are still rejected, unchanged).
+src/agent/llm.py          MODEL_TIERS/DEFAULT_MODEL_TIER/resolve_tier_model()/
+                          get_model_tiers(); get_llm(tier=None) (backward-compatible zero-arg
+                          call unchanged); OpenAILLM instances cached per resolved model name.
+src/agent/memory.py       new — ConversationMemory, is_referential_question,
+                          format_context_block, Turn.
+src/agent/agentic.py      AgenticFunnelAgent gains an optional `memory` constructor arg and
+                          `session_id`/`memory_enabled` run() params (both back-compatible
+                          defaults); system prompt gains the QA-5 consent/linkability-caveat
+                          rule; "context" event + PRIOR CONTEXT injection + post-answer
+                          recording wired into the loop.
+app/main.py               tier/session_id/memory params on both ask endpoints (all optional);
+                          /health reports tiers + default_tier; tier->llm/agent/agentic-agent
+                          caches (driver/knowledge never rebuilt); module-level
+                          conversation_memory singleton; sanitized session_id helper.
+docs/api_contract.md      new request/response fields, "context" SSE event, two new
+                          sections ("Model tiers (M7a)", "Conversation memory (M7a)").
+docs/deploy_guide.md      new Turkish section 8: how/why to point config/model_tiers.json's
+                          "max" entry (or AGENT_MODEL_MAX) at the strongest model the
+                          user's own OpenAI account actually has access to.
+src/agent/README.md       file table + environment variable table updated for guardrails/
+                          llm/memory/agentic changes.
+docs/PROJECT_STATE.md     M7a summary entry appended (existing project-log convention).
+tests/                    test_guardrails.py, test_agentic.py, test_api.py,
+                          test_api_stream.py, test_llm_provider_selection.py updated;
+                          test_model_tiers.py, test_memory.py added.
+
+-----------------------------------------------------------------------------------------
+Deviations from the brief / notable decisions
+-----------------------------------------------------------------------------------------
+- enforce_limit does NOT re-render SQL through sqlglot's generator for the common cases
+  (no-limit / already-safe-limit) — only the OVER-limit-capping case does a surgical text
+  splice of just the numeric LIMIT value, leaving everything else byte-for-byte identical
+  to the input. A first attempt that rendered the whole statement via `statement.sql()`
+  silently changed unrelated casing (e.g. `count(*)` -> `COUNT(*)`) and broke an existing
+  exact-string test (tests/test_agentic.py::TestSelfCorrection::
+  test_broken_sql_then_corrected_sql_after_seeing_error) — caught immediately by the "run
+  full suite, must stay green" rule and fixed before proceeding. Both existing LIMIT tests
+  (respects-existing, custom-max-rows, strips-semicolon, appends-when-absent) plus the two
+  new adversarial ones (LIMIT 10 preserved verbatim, LIMIT 999999 capped to 5000) pass.
+- OpenAILLM's new per-model-name cache is process-global (as specified), which is exactly
+  right for a real deployment (one fixed API key/model set for the process's life) but
+  leaks across tests that monkeypatch OPENAI_API_KEY within one pytest process — a test
+  built with a fake key earlier in the file would otherwise be silently reused by a later
+  test expecting construction to fail with no key at all. Fixed by resetting
+  agent.llm._OPENAI_LLM_CACHE in tests/test_llm_provider_selection.py's existing autouse
+  `_clean_env` fixture — a one-line, non-weakening test-isolation fix, not a behavior
+  change to the shipped cache itself.
+- Recording a turn into ConversationMemory is gated only on `session_id` being present,
+  NOT on `memory` being "on" — the brief's "recorded ... regardless of gate" is read as
+  "regardless of the injection activation gate (referential-question + has-history)", not
+  as also overriding the on/off switch; but since `memory=off` and "no session_id at all"
+  produce the same observable behavior (no context ever shown) for a client that only
+  cares about this request, either reading is a reasonable design. Documented explicitly
+  here since it is genuinely ambiguous in the brief.
+- Conversation memory's system-prompt injection and "context" event are wired into
+  AgenticFunnelAgent (the tool-use loop) only, since that is the only agent with a
+  "system prompt" for the brief's language to attach to, and the only place the "context"
+  SSE event can naturally sit (right after "plan" in the agentic trace). POST /api/ask's
+  single-shot FunnelAgent and /api/ask/stream's keyless KeywordLLM fallback both accept
+  and sanitize session_id/memory and still RECORD turns (so a session already has useful
+  history the moment a client is answered by a real, tool-use-capable provider), but
+  never inject context or emit a "context" event — there both accepting the params
+  without behavior and being a no-op for a keyless demo deployment. Verified via
+  tests/test_api.py::TestAskModelTierAndMemoryParams::
+  test_session_id_records_a_turn_into_conversation_memory and
+  tests/test_api_stream.py::TestStreamModelTierAndMemoryParams::
+  test_session_id_records_a_turn_even_in_keyless_fallback.
+- ConversationMemory reading a session (get_turns/has_turns) also refreshes its TTL
+  "last seen" clock (a session used at t=90 of a 100s TTL survives to t=190, not just
+  t=100) — a deliberate sliding-window interpretation of "2h TTL", proven by
+  tests/test_memory.py::TestConversationMemoryTTL::test_activity_refreshes_ttl.
+- Table-name whitelisting for the AST layer allows any table reference qualified as
+  `<db>.<name>` or bare `<name>` to match the exact whitelist string; a 3-part reference
+  explicitly including a catalog (e.g. `main.gold.funnel_overview`) is not specially
+  collapsed to `gold.funnel_overview` and would be rejected as unknown — this mirrors
+  agent SQL's actual style everywhere in this codebase (never catalog-qualified) and is
+  not exercised by any existing or new test, so left as a known, documented limitation
+  rather than added complexity.
+
+-----------------------------------------------------------------------------------------
+Rules honoured
+-----------------------------------------------------------------------------------------
+data/, sql/medallion.sql, and app/static/index.html (frontend) were not touched. All new
+code/docs are English except docs/deploy_guide.md's new section 8, which is Turkish by
+explicit instruction (matching that file's existing all-Turkish convention).
+POST /api/ask's pre-M7a request shape (question + lang only) keeps working unchanged —
+tests/test_api.py::TestAskModelTierAndMemoryParams::test_pre_m7a_request_body_still_works.

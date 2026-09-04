@@ -1,0 +1,29 @@
+# Example compose file for the Phonak Funnel Copilot demo (M2).
+#
+# Usage:
+#   ANTHROPIC_API_KEY=sk-ant-... docker compose up --build
+#
+# Without ANTHROPIC_API_KEY the app falls back to the deterministic
+# KeywordLLM planner (English-only narration; TR/EN toggle still works for
+# the UI chrome).
+services:
+  funnel-copilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: phonak-funnel-copilot:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      AGENT_DB: ${AGENT_DB:-duckdb}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-claude-sonnet-4-5}
+      # Only needed when AGENT_DB=databricks:
+      DATABRICKS_SERVER_HOSTNAME: ${DATABRICKS_SERVER_HOSTNAME:-}
+      DATABRICKS_HTTP_PATH: ${DATABRICKS_HTTP_PATH:-}
+      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN:-}
+      DATABRICKS_CATALOG: ${DATABRICKS_CATALOG:-workspace}
+      DATABRICKS_SCHEMA: ${DATABRICKS_SCHEMA:-sonova}
+    restart: unless-stopped

@@ -1,0 +1,38 @@
+# Secrets — never commit.
+.env
+apikey.md
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Node (frontend tooling, if any is ever added)
+node_modules/
+
+# Test-only ground truth: never distributed with the package/repo.
+data/_ground_truth.parquet
+
+# Generated datasets: reproducible byte-for-byte via `python src/generate_data.py`
+# (seed 42), so they are not committed.
+data/*.parquet
+data/_staging/
+
+# Local RAG embedding cache (docs/knowledge/.embedding_cache.json):
+# machine-specific, rebuildable, and may embed content that changes often.
+docs/knowledge/.embedding_cache.json
+
+# Internal working notes (project-management memory, presentation strategy,
+# QA diary, Turkish module reports) — not part of the public showcase.
+docs/PROJECT_STATE.md
+docs/sunum_altin_notlari.md
+docs/demo_qa_log.md
+docs/m1_rapor.md
+
+# Generated report screenshots are checked in deliberately (module retro
+# evidence) — keep them tracked, do not ignore reports/*.png.
+_staging/

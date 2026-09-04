@@ -1,0 +1,266 @@
+# -----------------------------------------------------------------------------
+# KPI registry for the ask-the-funnel agent.
+#
+# Since module M3c, every entry's SQL is a thin, read-only SELECT over one
+# gold-layer mart (see sql/medallion.sql) rather than a heavy query over raw
+# events — the funnel/attribution/D30 logic itself now lives ONCE in
+# sql/medallion.sql and is applied identically by both engines
+# (agent.medallion.apply_medallion). Conventions used throughout:
+#   * user grain per stage: MIN(event_timestamp) per id defines "first" events
+#     (computed in silver.web_user_stages / silver.app_user_stages);
+#   * cross-device (web -> app) joins go exclusively through
+#     silver.v_attribution_eligible (bronze.id_bridge filtered to
+#     opt_in_flag = true) — that is the privacy design, and every
+#     consent_note says what that implies;
+#   * D30 activity: any app_open 28-34 days (inclusive) after the first
+#     app_open; devices whose first open is within 34 days of the data
+#     horizon are excluded as right-censored (silver.app_user_stages.censored);
+#   * rates are returned as fractions in [0, 1].
+#
+# tests/test_metrics.py::test_gold_backed_metrics_match_old_direct_sql (via
+# tests/test_medallion.py) proves these thin selects return byte-for-byte the
+# same rows the pre-M3c direct-SQL versions did.
+# -----------------------------------------------------------------------------
+
+metrics:
+  - key: funnel_overview
+    title: "Funnel overview: users per stage"
+    description: >
+      Distinct users at each funnel stage: hearing test started, hearing test
+      completed (web grain), app downloaded (first app_open, app grain),
+      hearing aid paired (app grain), and active at day 28-34 after first
+      app open (app grain, censoring-aware).
+    consent_note: >
+      Web stages count pseudonymous web users; app stages count hashed app
+      devices. The two id spaces overlap only for consented, signed-in users
+      in id_bridge, so per-stage totals are honest per platform but cannot be
+      chained into one cross-device user journey for everyone.
+    sql: |
+      SELECT stage_order, stage, users
+      FROM gold.funnel_overview
+      ORDER BY stage_order
+    chart:
+      type: funnel
+      x: stage
+      y: users
+
+  - key: step_conversion_rates
+    title: "Step-to-step conversion rates"
+    description: >
+      Conversion rate from each funnel stage to the next, computed from the
+      same stage definitions as funnel_overview. The largest drop-off is the
+      step with the lowest rate.
+    consent_note: >
+      The web->app step (complete -> download) mixes id spaces (web pseudo ids
+      vs hashed app devices); the ratio is a population-level estimate, not a
+      per-user join.
+    sql: |
+      SELECT step, from_users, to_users, conversion_rate
+      FROM gold.step_conversion
+      WHERE from_users IS NOT NULL
+      ORDER BY stage_order
+    chart:
+      type: bar
+      x: step
+      y: conversion_rate
+
+  - key: completion_rate_by_channel
+    title: "Hearing test completion rate by acquisition channel"
+    description: >
+      Share of users who complete the hearing test after starting it, split by
+      the UTM campaign of their web traffic (web grain only; no cross-device
+      join required).
+    consent_note: >
+      Channel is taken from utm_campaign on web events; sessions without a
+      campaign are grouped as 'organic/none'. Web pseudonymous ids are used,
+      so consent-denied users are still visible at this aggregated level.
+    sql: |
+      SELECT channel, test_starts, test_completes, completion_rate
+      FROM gold.completion_by_channel
+      ORDER BY completion_rate DESC
+    chart:
+      type: bar
+      x: channel
+      y: completion_rate
+
+  - key: completion_rate_by_device
+    title: "Hearing test completion rate by device category"
+    description: >
+      Share of users who complete the hearing test after starting it, split by
+      web device category (desktop / mobile / tablet).
+    consent_note: >
+      Web grain only; each pseudonymous web id counts once per device
+      category it appeared on.
+    sql: |
+      SELECT device_category, test_starts, test_completes, completion_rate
+      FROM gold.completion_by_device
+      ORDER BY completion_rate DESC
+    chart:
+      type: bar
+      x: device_category
+      y: completion_rate
+
+  - key: downloads_by_channel
+    title: "App downloads by acquisition channel (bridge-linked)"
+    description: >
+      Distinct bridge users whose app was first opened after their hearing
+      test completion, split by acquisition_channel from the identity bridge.
+      The temporal order first_open > test_complete is enforced so the app
+      install is attributable to the funnel.
+    consent_note: >
+      Only consented, signed-in users appear in id_bridge, so these are
+      linkable downloads, not all downloads — treat as a lower bound and as a
+      channel-mix signal rather than absolute volume.
+    sql: |
+      SELECT acquisition_channel, linked_downloads
+      FROM gold.downloads_by_channel
+      ORDER BY linked_downloads DESC
+    chart:
+      type: bar
+      x: acquisition_channel
+      y: linked_downloads
+
+  - key: pairing_rate_by_channel
+    title: "Hearing aid pairing rate by acquisition channel (bridge-linked)"
+    description: >
+      Among bridge-linked users who downloaded the app (first open after test
+      completion), the share who paired a hearing aid, split by
+      acquisition_channel. Answers "which channel drives downloads that turn
+      into actual pairings".
+    consent_note: >
+      Restricted to consented, signed-in users in id_bridge; channels whose
+      users consent less often are under-represented.
+    sql: |
+      SELECT acquisition_channel, linked_downloads, paired_users, pairing_rate
+      FROM gold.pairing_by_channel
+      ORDER BY pairing_rate DESC
+    chart:
+      type: bar
+      x: acquisition_channel
+      y: pairing_rate
+
+  - key: pairing_rate_by_platform_market
+    title: "Pairing rate by platform and market"
+    description: >
+      Among app devices with at least one app_open, the share that paired a
+      hearing aid, split by platform (iOS/Android) and market. Market comes
+      from the identity bridge, so this view covers bridge-linked devices.
+    consent_note: >
+      Market is only known through id_bridge (consented, signed-in users), so
+      each platform x market cell reflects the linkable population, not every
+      app device.
+    sql: |
+      SELECT market, platform, app_devices, paired_devices, pairing_rate
+      FROM gold.pairing_by_platform_market
+      ORDER BY market, platform
+    chart:
+      type: bar
+      x: market
+      y: pairing_rate
+      series: platform
+
+  - key: d30_retention_by_channel
+    title: "D30 retention by acquisition channel (bridge-linked)"
+    description: >
+      Share of bridge-linked app users still active 28-34 days after their
+      first app open, split by acquisition_channel. Users whose first open is
+      within 34 days of the data horizon are excluded (right-censored).
+    consent_note: >
+      Bridge-linked users only (consented + signed-in); retention of
+      non-linkable users is unobservable by design.
+    sql: |
+      SELECT acquisition_channel, eligible_users, retained_users, d30_retention_rate
+      FROM gold.d30_by_channel
+      ORDER BY d30_retention_rate DESC
+    chart:
+      type: bar
+      x: acquisition_channel
+      y: d30_retention_rate
+
+  - key: weekly_test_starts_trend
+    title: "Weekly trend of hearing test starts"
+    description: >
+      Distinct web users starting the hearing test per calendar week.
+    consent_note: >
+      Web grain; weeks at the edges of the data window are partial.
+    sql: |
+      SELECT week_start, test_starts
+      FROM gold.weekly_test_starts
+      ORDER BY week_start
+    chart:
+      type: line
+      x: week_start
+      y: test_starts
+
+  - key: linkable_share_by_market
+    title: "Linkable web-to-app share by market"
+    description: >
+      How much of the app-download population we can actually connect across
+      web and app per market: bridge users divided by web users who hit the
+      app-store redirect in that market.
+    consent_note: >
+      Approximation, documented on purpose: true downloaders per market are
+      unknowable (app events carry no market), so web app_store_redirect
+      users per country stand in as the download denominator, and the
+      numerator is consented+signed-in bridge users. Read this as "share of
+      the funnel we can measure end-to-end", not as a precise link rate.
+    sql: |
+      SELECT market, redirect_users, bridge_users, linkable_share
+      FROM gold.linkable_share_by_market
+      ORDER BY linkable_share DESC
+    chart:
+      type: bar
+      x: market
+      y: linkable_share
+
+  - key: attribution_first_vs_last
+    title: "First-touch vs last-touch attribution by channel"
+    description: >
+      The same linkable-downloader population attributed twice: once to its
+      CRM first-touch channel (acquisition_channel) and once to its web
+      last-touch channel (last_touch_campaign, mapped to the same channel
+      names). Compares first-touch vs last-touch attribution model results
+      side by side, channel by channel.
+    consent_note: >
+      Linkable population only (consented + signed-in, bridge-linked
+      downloaders) — never total download volume. Where the two models
+      disagree on a channel is the story, not noise: first-touch credits
+      demand creation (how the user was originally acquired), last-touch
+      credits closing (what session actually finished the test). Read a
+      big swing between attribution_model values as "these two models tell
+      genuinely different stories for this channel," per
+      docs/knowledge/attribution.md.
+    sql: |
+      SELECT channel, attribution_model, attributed_downloads
+      FROM gold.attribution_first_vs_last
+      ORDER BY channel, attribution_model
+    chart:
+      type: bar
+      x: channel
+      y: attributed_downloads
+      series: attribution_model
+
+  - key: completion_by_channel_device
+    title: "Hearing test completion rate by channel and device"
+    description: >
+      Hearing-test completion rate for every channel x device_category
+      combination, web grain, all users who started the test (no
+      bridge/consent restriction). This is the cross-tab that separates the
+      traffic-quality hypothesis (a channel is weak on every device) from
+      the mobile-UX hypothesis (mobile is weak on every channel).
+    consent_note: >
+      Web grain only, ALL web users who started the test — not the linkable
+      subsample. Because paid-social traffic also skews mobile in this
+      data, a channel-only or device-only view cannot tell traffic quality
+      and device UX apart; only comparing completion_rate across
+      device_category WITHIN a single channel (and across channels within a
+      single device_category) on this grid can.
+    sql: |
+      SELECT channel, device_category, users_started, users_completed, completion_rate
+      FROM gold.completion_by_channel_device
+      ORDER BY channel, device_category
+    chart:
+      type: bar
+      x: channel
+      y: completion_rate
+      series: device_category

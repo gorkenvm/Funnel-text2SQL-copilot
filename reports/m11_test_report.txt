@@ -1,0 +1,836 @@
+M11 — Natural-language KPI dashboard: "build me a KPI dashboard for the
+last 3 months for Germany" as one command
+=========================================================================
+
+SCOPE
+-----
+Goal: make the WhatsApp-brief flow — one natural-language command that
+asks, selects the right data, and returns a filtered ~10-KPI dashboard —
+work end to end, on both the deterministic keyless path (KeywordLLM /
+FunnelAgent, this sandbox's default) and the tool-calling agentic path
+(AgenticFunnelAgent), plus the same filters as a first-class parameter
+on the existing dashboard API and frontend.
+
+Touched: sql/medallion.sql, src/agent/medallion.py, src/agent/llm.py,
+src/agent/agent.py, src/agent/tools.py, src/agent/agentic.py,
+src/agent/testing.py, app/main.py, app/static/index.html,
+docs/api_contract.md, docs/knowledge/methodology.md,
+docs/deploy_guide.md (§5.5). New: config/dashboard_kpis.json,
+src/agent/dashboard.py, tests/test_dashboard_cubes.py,
+tests/test_dashboard.py.
+
+PYTEST
+------
+Command: python3 -m pytest -q
+Baseline (pre-M11, matches M10's final count): 298 passed
+After M11: 377 passed, 0 failed   (net +79, 0 removed, 0 weakened)
+
+New/changed test files
+  tests/test_dashboard_cubes.py   NEW — cube parity vs. legacy marts,
+                                   no-negative-measures, row-count sanity,
+                                   GOLD_TABLES/guardrail-allowlist
+                                   membership, run_sql can query cubes.
+  tests/test_dashboard.py         NEW — intent regex, relative-date
+                                   parsing/anchoring, filter extraction,
+                                   filter validation, WHERE-clause safety
+                                   (incl. parametrized injection attempts),
+                                   filter-label formatting, KPI registry
+                                   loading, unfiltered/filtered
+                                   run_dashboard().
+  tests/test_tools.py             1 test renamed + updated (now expects
+                                   5 tools incl. build_dashboard).
+  tests/test_api.py               +8 tests — TestFilteredDashboardM11
+                                   (empty filters, market narrowing, date
+                                   range, 422s for bad market/channel/date/
+                                   injection, legacy-path regression).
+  tests/test_api_stream.py        +2 tests — TestDashboardSseEventM11
+                                   (dashboard SSE event shape + ordering,
+                                   non-dashboard question never emits it).
+  tests/test_agentic.py           +3 tests — TestBuildDashboardM11 (tool
+                                   call emits dashboard event, system
+                                   prompt carries the dashboard-intent
+                                   rule, invalid filter surfaces as a
+                                   failed tool result not a crash).
+  tests/test_agent_e2e.py         +5 tests — TestKeywordLlmDashboardIntentM11
+                                   (KeywordLLM.plan returns dashboard mode
+                                   with extracted filters; FunnelAgent.ask
+                                   builds the Germany/last-3-months
+                                   dashboard end to end; no-filter case
+                                   covers all data; invalid filter degrades
+                                   to mode="error" not a crash; a genuine
+                                   single-metric question is never
+                                   misclassified as a dashboard request).
+
+GOLD CUBES — SCHEMA AND PARITY
+-------------------------------
+gold.web_funnel_weekly_cube
+  Grain:   week_start x market x device_category x channel
+  Source:  silver.web_user_stages
+  Measures: test_starts, test_completes, store_redirects
+  Unfiltered SUM parity (verified by direct DuckDB query and by
+  tests/test_dashboard_cubes.py):
+    test_starts=100000, test_completes=42062, store_redirects=23405
+  — matches gold.funnel_overview / gold.linkable_share_by_market exactly.
+
+gold.journey_weekly_cube
+  Grain:   week_start x acquisition_channel x market x platform
+  Source:  silver.linked_journeys
+  Measures: downloads, paired_users, d30_retained, and (deliberate
+  addition beyond the literal 3-measure spec) d30_eligible — the
+  right-censoring-aware denominator. d30_retained alone cannot produce
+  a correct D30 rate: the raw downloads count would incorrectly include
+  cohorts too close to the data horizon to have completed their
+  28-34-day observation window (see docs/knowledge/methodology.md's
+  pre-existing D30 section, whose logic this cube inherits verbatim).
+  Unfiltered SUM parity:
+    downloads=6863            (matches gold.downloads_by_channel)
+    paired_users=4305         (matches gold.pairing_by_channel)
+    d30_eligible=4243 / d30_retained=2204
+                               (matches gold.d30_by_channel EXACTLY)
+
+  Note on that last exact match: gold.d30_by_channel's population is
+  app_user_stages joined to v_attribution_eligible, which is structurally
+  WIDER than silver.linked_journeys (linked_journeys additionally
+  requires the temporal-order rule: first app_open strictly after
+  hearing_test_complete). On THIS synthetic dataset the two populations
+  happen to be identical (6863 rows either way), so the cube's totals
+  match exactly rather than merely being a subset. Documented in the
+  cube's COMMENT ON and in the test docstrings as a dataset property,
+  not a structural guarantee — a future dataset where the temporal-order
+  rule actually excludes rows would make the cube a subset of the mart,
+  still parity-safe in direction but no longer bit-identical.
+
+Both cubes are added to agent.medallion.GOLD_TABLES (12 -> 14 gold
+objects) so they appear in GET /api/catalog and pass the sqlglot
+table-allowlist guardrail for ad hoc run_sql use.
+
+FILTERABLE KPI REGISTRY
+------------------------
+config/dashboard_kpis.json — 10 templates, each naming a source cube,
+a {{where}} placeholder, and an allowlist mapping generic filter names
+(market, channel, device, platform, date_start, date_end) to actual
+cube columns:
+  dash_funnel_stages, dash_step_conversions, dash_completion_by_channel,
+  dash_completion_by_device, dash_completion_channel_device,
+  dash_downloads_by_channel, dash_pairing_by_channel,
+  dash_pairing_by_platform_market, dash_d30_by_channel,
+  dash_weekly_test_starts
+
+Server-side WHERE composition (src/agent/dashboard.py:build_where) never
+splices raw user text into SQL: a value is only ever included if (a) its
+filter name is in that template's allowlist and (b) the value is present
+in the cube's actual distinct values (cached), or is a validated
+YYYY-MM-DD date; values are then quoted with embedded-quote doubling as
+defense in depth. tests/test_dashboard.py::TestBuildWhereSafety
+parametrizes several injection attempts (stray quotes, `; DROP TABLE`,
+`OR 1=1`, comment sequences) and asserts each is rejected rather than
+composed into the WHERE clause.
+
+FILTERS MODEL
+-------------
+DashboardFilters (pydantic, extra="forbid"): date_start, date_end,
+market, channel, device, platform — all optional.
+
+- Relative ranges ("last 3 months", "son 3 ay") are resolved against
+  MAX(event_timestamp) actually present in the data
+  (agent.dashboard.get_data_horizon), never wall-clock "today" — this
+  is a static demo dataset (June 2 - Aug 30 2026), so anchoring to
+  today would silently return an empty dashboard once "today" runs
+  past the data's own end.
+- market/channel/device/platform are validated against real distinct
+  values pulled from the cubes (cached per driver); an unrecognized
+  value raises FilterValidationError naming the offending field, which
+  every call site (API, agentic tool, FunnelAgent.ask) turns into an
+  actionable 422 / tool-error / mode="error" response rather than a
+  silent no-op filter or a crash.
+- Natural-language extraction (agent.dashboard.extract_filters_from_text)
+  is a separate, driver-less regex layer used by KeywordLLM.plan(), so
+  the deterministic path doesn't need a driver just to parse text; date
+  resolution happens one layer up, in FunnelAgent._ask_dashboard / the
+  build_dashboard tool handler, both of which do have a driver.
+
+INTEGRATION SURFACE
+--------------------
+- Agentic tool-use loop: new build_dashboard tool (src/agent/tools.py),
+  system-prompt rule telling the LLM to call it for dashboard/overview
+  requests and NOT for single-metric questions (src/agent/agentic.py),
+  new "dashboard" SSE event carrying {cards, filter_label}.
+- Deterministic path: KeywordLLM.plan() detects dashboard intent via
+  regex before falling through to metric-keyword matching; FunnelAgent
+  gets a new _ask_dashboard() method; testing.py gains a
+  dashboard_script() helper for scripted-LLM tests.
+- POST /api/dashboard: new optional `filters` field. Omitted entirely
+  -> byte-for-byte unchanged legacy top-12 behavior. Present (even {})
+  -> served from the two cubes via the KPI registry; invalid filter
+  values -> 422 naming the field.
+- GET /api/ask/stream: emits the new "dashboard" event (either after a
+  successful build_dashboard tool_result, or in place of the usual
+  plan/answer pair in keyless mode) followed by a short one-paragraph
+  "answer" event referencing the same filter label, then "done".
+- Frontend (app/static/index.html): a "dashboard" SSE event renders the
+  live dashboard panel and shows an --accent-soft filter-label chip with
+  a clear-x; clearing calls the legacy /api/dashboard path and restores
+  the default top-12 view. New 7th welcome chip ("KPI dashboard for the
+  last 3 months" / TR: "Son 3 ay için KPI kokpiti"). The "Build top-12
+  KPI dashboard" button's legacy behavior is untouched.
+
+DOCS UPDATED
+------------
+- docs/api_contract.md: `filters` on POST /api/dashboard (request/
+  response shape + new 422 row), the "dashboard" SSE event type row,
+  GET /api/catalog's gold-object count (12 -> 14), and a new
+  "Filterable KPI dashboard (M11)" section summarizing the cubes,
+  registry, and filters model.
+- docs/knowledge/methodology.md: new section "Filterable KPI dashboard
+  cubes (M11): promoting a frequent question to dimensional gold" —
+  explains why these two cubes exist (a filtered slice asked often
+  enough to warrant one wider-grain aggregate instead of one mart per
+  filter combination), their grain/measures, the D30 right-censoring
+  reuse, and the channel-vocabulary-unification tradeoff.
+- docs/deploy_guide.md §5.5: added a note (Turkish, matching the
+  section's language) that after pulling M11, `python
+  scripts/load_to_databricks.py` must be re-run so the two new cubes
+  exist in Databricks — the script re-applies the same sql/medallion.sql
+  file, so no separate migration step is needed.
+
+SCREENSHOTS (reports/, Playwright + chromium)
+----------------------------------------------
+m11_dashboard_germany_light.png   Flagship scenario: "Build me a KPI
+                                   dashboard for the last 3 months for
+                                   Germany" -> filter chip "Last 3 months
+                                   · DE", numbers correctly narrowed
+                                   (39,779 test starts vs. 100,000
+                                   unfiltered).
+m11_dashboard_filtered_light.png  "Build a KPI dashboard for the last 3
+                                   months" (no market) -> chip "Last 3
+                                   months", ~10 dash_* cards. Numbers
+                                   equal the unfiltered totals here
+                                   because the whole synthetic dataset
+                                   only spans ~3 months (verified via
+                                   MIN/MAX event_timestamp — a data
+                                   characteristic, not a bug).
+m11_dashboard_filtered_dark.png   Same scenario, dark theme.
+m11_dashboard_filtered_tr.png     Turkish UI chrome, welcome chip "Son 3
+                                   ay için KPI kokpiti" clicked; the
+                                   resulting filter-chip TEXT stays
+                                   English ("Last 3 months") since the
+                                   filter label is generated server-side
+                                   from resolved dates, not translated —
+                                   noted as an acceptable scope
+                                   boundary, not fixed.
+m11_dashboard_cleared_light.png   After clicking the chip's clear-x:
+                                   legacy unfiltered top-12 dashboard
+                                   restored, chip gone.
+m11_welcome_new_chip_light.png    Welcome screen showing the new 7th
+                                   suggestion chip.
+
+DECISIONS / AMBIGUITIES
+-------------------------
+1. Added d30_eligible as a 4th measure on journey_weekly_cube beyond the
+   literal 3 named in the brief, because d30_retained without a
+   right-censoring-aware denominator cannot yield a correct rate.
+2. Unified channel vocabulary across both cubes (mapped acquisition-
+   channel buckets, not each source table's raw UTM/campaign string) so
+   one `channel` filter value works identically against both cubes;
+   documented that per-channel breakdowns from the cube therefore won't
+   look byte-identical to gold.completion_by_channel's raw-campaign-
+   keyed rows, even though SUM totals still match exactly.
+3. journey_weekly_cube's d30 population is a documented dataset-specific
+   exact match to gold.d30_by_channel's wider population, not a
+   guaranteed structural equality — flagged explicitly in both the SQL
+   COMMENT ON and the parity tests so a future dataset change doesn't
+   silently look like a regression.
+4. Split filter-text extraction (driver-less, regex-only) from relative-
+   date resolution (driver-aware, anchored to MAX(event_timestamp)) into
+   two layers, since KeywordLLM.plan() has no driver access but
+   FunnelAgent.ask() and the build_dashboard tool handler both do.
+5. Kept src/agent/dashboard.py free of any module-level import of
+   agent.agent (self-contained narration/summary helpers instead) to
+   avoid a circular import, since agent.agent needs agent.dashboard for
+   _ask_dashboard.
+6. Frontend filter-label text is generated server-side and is not
+   independently translated for the TR UI (see screenshot note above) —
+   judged acceptable since the surrounding chrome (chip title, clear
+   button, aria-label) is fully localized and the label itself is a
+   short, mixed English/date-and-code string ("Last 3 months · DE")
+   either way.
+
+REMINDER FOR DEPLOYMENT
+-------------------------
+Before this module's changes are live against Databricks, re-run
+`python scripts/load_to_databricks.py` (see docs/deploy_guide.md §5.5)
+so gold.web_funnel_weekly_cube and gold.journey_weekly_cube get created
+there too — the script re-applies sql/medallion.sql in full, so this is
+the same one command already used for every prior schema change, not a
+new migration step.
+
+
+ADDENDUM: IDEAL CHART FORMS (manager follow-up, same M11 module)
+==================================================================
+
+TRIGGER
+-------
+Dashboard charts almost always rendered as a plain vertical bar, because
+every KPI's config declares one static `chart.type` and every card used
+it verbatim. Follow-up request: compute the IDEAL chart form per result
+and use it as the DEFAULT, while the existing manual per-card
+chart-type switcher keeps working and a user's manual choice keeps
+winning and persisting via the existing board-state localStorage.
+
+Frontend-only change, as scoped: app/static/index.html. No backend
+files touched, and no config/dashboard_kpis.json or src/agent/
+metrics.yaml edits were needed either (see "No config changes needed"
+below) — pytest stays at 377 passed, unchanged.
+
+HEURISTIC (pickIdealChart(rows, spec), priority order)
+--------------------------------------------------------
+One pure function, applied wherever a card's chart is built from
+{rows, chart spec}: legacy top-12 dashboard cards, the M11 filtered
+~10-KPI dashboard cards, and an ad-hoc single-question chart card in
+chat. Never mutates its inputs; returns {chart, rows} — a shallow
+clone of the spec with `.type` possibly overridden, and either the same
+rows reference or a freshly sorted copy.
+
+1. Single row x single measure -> stat tile. (Already independently
+   enforced by makeCard's own isStatShape() gate regardless of
+   chart.type; pickIdealChart matches it too so its own contract stays
+   honest, but this rule was never the gap being fixed.)
+2. Temporal x (column name matching date/day/week/month/year/time, or
+   an ISO-8601-looking value) -> line. Guarded off any hypothetical
+   series-carrying result (none currently exist) so a future time+
+   series KPI can't silently lose its breakdown to a single line.
+3. Funnel / stage-ordered data -> keep the existing funnel/horizontal-
+   bar treatment, rows left in the order the SQL already gave them —
+   NEVER re-sorted by value. Detected generically off the app's own
+   "stage"/"step" x-column naming convention (funnel_overview's
+   `stage`, step_conversion_rates'/dash_step_conversions' `step`,
+   dash_funnel_stages' `stage`) or an already-declared chart.type
+   "funnel", rather than hardcoding metric keys — a future stage-
+   ordered KPI keeps working without a JS change as long as it follows
+   the same x-column naming.
+4. Cross-tab with a series dimension -> grouped bar (existing rendering
+   unchanged); DESIGN.md §2's legend rule (>=2 series -> legend on)
+   already keys off series count at render time, so it needed no
+   change.
+5. Plain categorical -> sorted once, descending by value. Horizontal
+   bar (new "hbar" chart type) when there are more than 6 categories OR
+   any x-label is longer than 10 characters (the mapped channel-name
+   vocabulary — "paid_social_tiktok" etc. — always trips this even at
+   5 categories); vertical bar otherwise (e.g. device_category's short
+   desktop/mobile/tablet labels). Sorting happens once in
+   pickIdealChart, so the switcher's bar<->hbar toggle keeps showing
+   the same meaningful order. Rate/percent axis formatting was already
+   automatic (fmtValue already turns a 0..1 fractional value into a
+   "%"-suffixed label wherever it's used as an axis formatter) — no
+   change needed there.
+6. Never pie/donut/dual-axis as a DEFAULT. Pie remains available as a
+   manual-only choice via the existing switcher (unchanged), since nothing
+   in the request asked to remove a working manual option — only to
+   stop it (or a plain bar) from being the unconditional default.
+
+WHAT CHANGED PER KPI (legacy top-12 + the M11 filtered set)
+--------------------------------------------------------------
+funnel_overview / dash_funnel_stages          funnel (unchanged; rule 3)
+step_conversion_rates / dash_step_conversions bar -> funnel-style horizontal
+                                               bar, order preserved (rule 3;
+                                               previously these were a plain
+                                               "bar" that pickIdealChart
+                                               would otherwise have sorted
+                                               by value — the "stage"/"step"
+                                               name-based detection in rule 3
+                                               is exactly what prevents that)
+completion_rate_by_channel /                  bar -> hbar, sorted desc
+  dash_completion_by_channel                  (rule 5: long channel labels)
+completion_rate_by_device /                   bar -> bar, sorted desc
+  dash_completion_by_device                   (rule 5: short labels, <=6)
+downloads_by_channel / dash_downloads_by_channel  bar -> hbar, sorted desc
+pairing_rate_by_channel / dash_pairing_by_channel bar -> hbar, sorted desc
+d30_retention_by_channel / dash_d30_by_channel    bar -> hbar, sorted desc
+linkable_share_by_market                      bar -> bar, sorted desc
+                                               (unchanged visually — already
+                                               3 short labels, already
+                                               ORDER BY ... DESC in SQL)
+weekly_test_starts_trend / dash_weekly_test_starts line (unchanged; rule 2)
+pairing_rate_by_platform_market /             grouped bar (unchanged; rule 4)
+  dash_pairing_by_platform_market
+completion_by_channel_device /                grouped bar (unchanged; rule 4)
+  dash_completion_channel_device
+attribution_first_vs_last                     grouped bar (unchanged; rule 4)
+
+No config/dashboard_kpis.json or src/agent/metrics.yaml edits were
+needed: the "stage"/"step" x-column naming convention already used
+throughout both registries was enough for pickIdealChart's rule 3 to
+recognize step_conversion_rates/dash_step_conversions as order-
+sensitive without touching their static `chart.type: bar` hint or the
+backend narration logic that also reads it (agent.agent.FunnelAgent.
+_narrate / agent.dashboard._narrate_card branch on chart.type — changing
+the config value would have altered answer-text narration too, which
+was out of scope for a "frontend heuristic, no backend changes needed"
+request). No other static hint looked clearly wrong.
+
+WIRE-UP / OVERRIDE PRECEDENCE
+--------------------------------
+Precedence, highest first: (1) a chart type already persisted for that
+card's key in localStorage's funnelCopilotBoard_v1.chartType — applied
+via the pre-existing withPersistedChartType(), now called on
+pickIdealChart's OUTPUT rather than on the raw server-declared chart;
+(2) pickIdealChart's own pick; (3) the server-declared chart.type,
+which only surfaces when neither of the above overrides it (i.e. never,
+in practice, since pickIdealChart always returns a definite type for
+any non-empty rows array). Call sites: renderDashboardGrid() (both
+dashboard flavors) and finishWithResult()'s ad-hoc chat chart-card
+branch (no persisted-override step there — those cards are ephemeral,
+carry no board-state key, exactly as before this addendum).
+
+New "hbar" chart type added to buildEchartsOption() (mirrors the
+existing "funnel" branch's horizontal-bar layout, but sorts are the
+caller's responsibility — done once in pickIdealChart — and its left
+grid margin scales with the longest label, 90-220px, since generic
+category labels run longer than funnel's fixed 120px). chartTypeCycle()
+extended from ["bar","line","pie"] to ["bar","hbar","line","pie"] for
+plain (non-funnel, non-series) charts, so the switcher now also offers
+"hbar" as a manual option; the funnel and grouped-series cycles are
+unchanged.
+
+VALIDATION
+----------
+pytest: 377 passed (unchanged from before this addendum — no backend
+code or tests touched). JS syntax checked with `node --check` on the
+extracted <script> block.
+
+App restarted check: not needed — app/static/index.html is served via
+FastAPI's StaticFiles(directory=...) mount, read from disk per request,
+so the running keyword/duckdb server on port 8124 picked up the change
+without a restart (confirmed via GET /health before and after editing).
+
+Playwright screenshots (reports/, chromium, both dashboard flavors show
+a visible mix of chart forms; a two-shot top/bottom pair per view since
+the dashboard grid scrolls internally and a single full-page capture
+does not reach cards below the fold):
+  m11_ideal_charts_default_light_top.png / _bottom.png
+      Legacy top-12 dashboard: funnel (order preserved), step-conversion
+      as an order-preserved horizontal bar, completion-by-channel as a
+      sorted horizontal bar (long labels), completion-by-device as a
+      sorted vertical bar (short labels), a line chart (weekly trend),
+      a sorted vertical bar (3-market linkable share), and two grouped
+      bars with legends (first-touch vs last-touch; channel x device) —
+      every rule's output visible in one dashboard.
+  m11_ideal_charts_filtered_light_top.png / _bottom.png
+      The "last 3 months" filtered dashboard (via chat), same variety
+      across its 10 dash_* cards, filter chip visible.
+  m11_ideal_charts_filtered_dark_top.png / _bottom.png
+      Same filtered dashboard, dark theme — contrast and series colors
+      verified correct in both themes per DESIGN.md §2.
+  m11_ideal_charts_manual_override_before_reload.png
+      "Hearing test completion rate by acquisition channel" (ideal
+      default: hbar, long channel labels) manually switched to line via
+      one click of the card's chart-type button.
+  m11_ideal_charts_manual_override_after_reload.png
+      Same card after a full page reload + rebuilding the (legacy)
+      dashboard from scratch: still renders as a line chart — the
+      persisted override in localStorage's funnelCopilotBoard_v1 beat
+      pickIdealChart's own hbar default, exactly as required. Confirmed
+      programmatically too: reading
+      JSON.parse(localStorage.funnelCopilotBoard_v1).chartType.
+      completion_rate_by_channel back out returned "line" right after
+      the click, before the reload even happened.
+
+DECISIONS / AMBIGUITIES (addendum)
+-------------------------------------
+1. Long-label threshold set at 10 characters and category-count
+   threshold at the requested 6 — chosen so the mapped channel-name
+   vocabulary (paid_social_meta, paid_search_brand, paid_social_tiktok,
+   retargeting_meta, organic_direct — all 13+ characters) reliably
+   trips the horizontal-bar branch even at only 5 categories, while
+   short labels (device_category, market, platform) stay vertical.
+2. Rule 3's stage/step detection is name-based ("stage"/"step" as the
+   x column, or an already-declared chart.type "funnel") rather than a
+   hardcoded list of metric keys, and also recognizes a companion
+   "<x>_order" column as a secondary signal for any future KPI that
+   uses different column naming — this was necessary because
+   step_conversion_rates' underlying SQL (gold.step_conversion via
+   metrics.yaml) does not select its own `stage_order` column into the
+   output, so an order-column-only heuristic would have missed exactly
+   the case named in the request ("step keys").
+3. Deliberately left config/dashboard_kpis.json and src/agent/
+   metrics.yaml untouched (see "WHAT CHANGED PER KPI" above) even
+   though the request permitted refining them — the name-based
+   detection in (2) already fixes the one static hint that mattered
+   without touching a config value that backend narration logic also
+   reads, keeping this a true frontend-only change with zero risk to
+   the 377 passing backend tests.
+4. A cross-tab (series) result is never forced into the temporal-line
+   rule even though the priority list places rule 2 above rule 4 —
+   added as a defensive guard (`!spec.series` before the temporal
+   check) since buildEchartsOption's "line" case only ever plots one
+   series and would otherwise silently drop a breakdown. No current
+   KPI combines a temporal x with a series field, so this changes
+   nothing observable today; it only prevents a latent bug for a
+   future KPI that does.
+5. Pie stays reachable only through the manual switcher, never as
+   pickIdealChart's own pick (rule 6) — consistent with "the existing
+   manual chart-type switcher... must keep working."
+
+
+M11-FIX: DAILY GRAIN (approved by the user, real-run bug)
+============================================================
+
+ROOT CAUSE
+----------
+A real run of "Build me a KPI dashboard for the last 3 days for
+Germany" silently produced a "last 6 weeks" dashboard instead. Two
+causes, both required to fix:
+
+1. The two M11 gold cubes were WEEK-grained (week_start). A day-level
+   filter is structurally unanswerable off a week bucket — there is no
+   query that turns "last 3 days" into a correct answer from data that
+   is only ever cut by calendar week.
+2. agent.dashboard._RELATIVE_RANGE_RE only recognized months/weeks
+   (+ "ay"/"hafta"). Faced with "last 3 days", the real (tool-calling)
+   LLM got back a ToolError from build_dashboard, and — rather than
+   surfacing that mismatch to the user — quietly retried with a
+   different, supported phrase ("last 6 weeks") and presented the
+   result as if it were what was asked. The parser gap made the
+   substitution possible; the missing "final answer must say what was
+   actually applied" instruction is what let it go out silently.
+
+RENAME MAP
+----------
+Every reference renamed together (grep-verified zero stale hits outside
+intentional before/after history entries in docs/PROJECT_STATE.md):
+
+  gold.web_funnel_weekly_cube  -> gold.web_funnel_daily_cube
+  gold.journey_weekly_cube     -> gold.journey_daily_cube
+  week_start (cube column)     -> day_date (cube column)
+
+Touched: sql/medallion.sql (cube DDL + COMMENT ON, both now explaining
+the day-grain choice and citing the M11-fix), src/agent/medallion.py
+(GOLD_TABLES, still 14 gold objects), src/agent/dashboard.py (module
+docstring, distinct-value queries, a code comment), src/agent/tools.py
+(build_dashboard's tool description + relative_range example), app/
+main.py (a code comment), config/dashboard_kpis.json (every template's
+`cube` + `filter_columns` date_start/date_end mapping, now day_date);
+dash_weekly_test_starts keeps its title and line-chart behavior
+unchanged but now buckets day_date up to weeks itself
+(DATE_TRUNC('week', day_date)) rather than relying on the cube already
+being week-grained. Docs: docs/api_contract.md, docs/knowledge/
+methodology.md (new "M11-fix: re-grained from weekly to daily"
+subsection), docs/deploy_guide.md §5.5 (new Turkish note), docs/
+PROJECT_STATE.md (new "M11-fix tamamlandı" section — the original M11
+entry is left as history, not rewritten). Tests: tests/
+test_dashboard_cubes.py (class names + every SQL string renamed;
+GOLD_TABLES/ALLOWED_TABLES membership assertions), tests/
+test_dashboard.py (WEB_COLUMNS fixture, one injection-string literal,
+new day-range/UnparseableRangeError test classes).
+
+PARITY NUMBERS (unchanged from pre-fix M11, re-verified post re-grain)
+------------------------------------------------------------------------
+Unfiltered SUM parity (gold.web_funnel_daily_cube):
+  test_starts=100000, test_completes=42062, store_redirects=23405
+Unfiltered SUM parity (gold.journey_daily_cube):
+  downloads=6863, paired_users=4305, d30_eligible=4243, d30_retained=2204
+
+NEW: weekly-rollup-of-daily-cube parity (proves the re-grain lost no
+information — tests/test_dashboard_cubes.py::TestDailyCubeWeeklyRollupParity):
+  SELECT DATE_TRUNC('week', day_date), SUM(test_starts) FROM
+  gold.web_funnel_daily_cube GROUP BY 1
+  reproduces, ROW FOR ROW (same week_start values, same per-week sums),
+  SELECT DATE_TRUNC('week', first_test_start_ts), COUNT(*) FROM
+  silver.web_user_stages GROUP BY 1 — i.e. exactly what the retired
+  week_start cube's own rows were, recomputed directly from the same
+  silver source (the retired table no longer exists to compare against
+  directly). Same check done for gold.journey_daily_cube's downloads
+  against silver.linked_journeys, also row-for-row exact.
+
+DAYS SUPPORT
+------------
+_RELATIVE_RANGE_RE extended: `days?` and Turkish `gün` added to the unit
+alternation (previously only months?/weeks?/ay/hafta). parse_relative_range
+gained an `is_day` branch parallel to the existing `is_week`/month branches.
+Verified: "last 3 days", "past 5 days", "son 3 gün" all resolve; "last 3
+hours" still correctly returns None (hours is not, and is not meant to
+become, a supported unit).
+
+BOUNDARY SEMANTICS (documented per the fix request)
+-------------------------------------------------------
+date_start = horizon - N <unit>, BOTH ENDS INCLUSIVE, for every unit
+alike — this is the same convention weeks/months already used before
+days existed ("last 1 week" already spans horizon-7..horizon inclusive,
+8 days, not a clean 7), kept uniform rather than special-casing days.
+Concretely: "last 3 days" against a horizon of 2026-08-30 spans
+2026-08-27..2026-08-30 inclusive — 4 calendar days, not 3. This is a
+deliberate choice, not an off-by-one bug: a caller wanting a strict
+"N calendar days excluding today" window would pass N-1, which nothing
+in this change requires.
+
+HONESTY RULE
+------------
+- New agent.dashboard.UnparseableRangeError(ValueError): carries `phrase`
+  and `supported_units` ("days", "weeks", "months"); its message names
+  the supported units so an LLM can retry correctly.
+- New agent.dashboard.resolve_relative_range(text, horizon): like
+  parse_relative_range but RAISES UnparseableRangeError instead of
+  returning None — used at call sites where the text arrives as an
+  explicit "this names a range" argument (the build_dashboard tool),
+  where silently doing nothing would repeat the exact bug this fix
+  closes. agent.tools.ToolRegistry.build_dashboard now calls this and
+  turns the structured error into a ToolError (so the agentic loop feeds
+  it back to the LLM as a failed tool_result, same self-correction path
+  every other tool failure already uses).
+- agent.agentic.AgenticFunnelAgent's system prompt gained a HONESTY RULE
+  sentence in the DASHBOARD INTENT paragraph: the model's final answer
+  MUST state the exact applied filter_label verbatim, and say so
+  explicitly (with why) whenever it differs from what the user actually
+  asked — this is the half of the fix that closes the gap code alone
+  cannot: even with days now parseable, a still-unsupported ask (e.g.
+  "last 3 hours") or any other filter substitution must be disclosed,
+  never silently presented as an exact match.
+- Applied-range echo: run_dashboard()'s return gained `applied_range`
+  ({"start", "end", "label"} or None) — the resolved date window in
+  isolation from the compound filter_label string (which also bundles
+  market/channel/device/platform). Threaded through agent.tools.
+  build_dashboard (automatic, same dict), agent.agent._ask_dashboard,
+  and both SSE dashboard-event emitters (agent.agentic + app.main's
+  keyless fallback) and POST /api/ask's JSON response. POST /api/dashboard
+  (structured filters, no natural-language parsing) does not carry it —
+  a caller there always supplies already-resolved dates, so there is
+  nothing to reconcile against a request phrase.
+
+TESTS ADDED
+-----------
+tests/test_dashboard.py:
+  TestParseRelativeRange   +6 tests (days, singular label, "past N days",
+                            Turkish "gün", days-not-misread-as-weeks,
+                            unsupported unit still returns None)
+  TestResolveRelativeRange  NEW class, 3 tests (supported phrase matches
+                            parse_relative_range; unsupported unit and
+                            nonsense text both raise UnparseableRangeError
+                            with the right .phrase/.supported_units)
+  TestRunDashboardFiltered +3 tests (last-3-days narrows to a small
+                            plausible slice vs. unfiltered; applied_range
+                            echoes resolved dates+label; applied_range is
+                            None with no date filter)
+tests/test_dashboard_cubes.py:
+  TestDailyCubeWeeklyRollupParity  NEW class, 2 tests (weekly rollup of
+                            each daily cube matches direct week-truncation
+                            of the same silver source, row for row)
+tests/test_tools.py:
+  TestBuildDashboardTool    NEW class, 3 tests (days relative_range
+                            resolves + narrows; unparseable relative_range
+                            raises ToolError naming days/weeks/months;
+                            explicit dates still work and populate
+                            applied_range with label=None)
+tests/test_agentic.py:
+  TestBuildDashboardM11    +2 tests (system prompt carries "HONESTY RULE"
+                            + "filter_label" + "supported units" verbatim;
+                            an unparseable relative_range surfaces as a
+                            failed tool_result naming the supported units,
+                            never emits a "dashboard" event)
+
+PYTEST
+------
+Before this fix (M11 baseline): 377 passed
+After this fix:                 396 passed  (+19, 0 removed, 0 weakened)
+All green; every renamed reference re-verified with a repo-wide grep
+(zero stale gold.*_weekly_cube hits outside intentional history log
+entries in docs/PROJECT_STATE.md).
+
+DUCKDB REBUILD
+--------------
+No separate rebuild step exists or was needed: agent.db.DuckDBDriver
+opens an IN-MEMORY DuckDB connection and calls agent.medallion.
+apply_medallion(...) against it on every construction (see
+src/agent/db.py) — so every fresh process (including every pytest run
+and the app server started for this validation) already re-applies the
+updated sql/medallion.sql from scratch. Verified by running the full
+suite (396 green) and by the live app's /health + a real "last 3 days
+for Germany" request both reflecting the new schema immediately after
+restart.
+
+VALIDATION RUN
+--------------
+App restarted on port 8125 (AGENT_LLM=keyword, AGENT_DB=duckdb) per the
+fix request (a fresh port, distinct from M11's 8124). Asked, via
+GET /api/ask/stream (curl and Playwright/chromium):
+
+  "Build me a KPI dashboard for the last 3 days for Germany"
+
+Observed:
+  filter_label:   "Last 3 days · DE"
+  applied_range:  {"start": "2026-08-27", "end": "2026-08-30", "label": "Last 3 days"}
+  dash_funnel_stages rows: test_starts=1,336, test_completes=540,
+                           store_redirects=239 (40.4% conversion)
+  downloads=73, pairings=25 (dash_downloads_by_channel / dash_pairing_by_channel sums)
+  final answer: "Filtered KPI dashboard (Last 3 days · DE): 1,336 test
+  starts, 540 completions (40.4% conversion), 239 app-store redirects.
+  73 linked downloads, 25 pairings among them (consented, linkable
+  population)."
+
+These are small, plausible numbers for a 4-calendar-day, single-market
+slice of a ~100,000-test-start / 3-market dataset (roughly 1.3% of the
+unfiltered total, consistent with ~4 days out of ~90 and 1 of 3
+markets) — a world away from the pre-fix "silently 6 weeks" behavior.
+
+SCREENSHOTS
+-----------
+reports/m11fix_dashboard_last3days_de_light.png
+  Light theme: "Last 3 days · DE" filter chip, funnel/step-conversion/
+  completion cards all showing the small, narrowed numbers above.
+reports/m11fix_dashboard_last3days_de_dark.png
+  Same state, dark theme — contrast and chip readability confirmed.
+
+DECISIONS / AMBIGUITIES (this fix)
+-------------------------------------
+1. Boundary semantics for days deliberately mirror weeks/months' existing
+   "-N units, both ends inclusive" convention rather than a "trailing N
+   calendar days" convention, per the fix request's explicit instruction
+   to keep it "consistent with existing week/month logic" — documented
+   in parse_relative_range's docstring and in docs/api_contract.md.
+2. "Add an applied-range echo" was implemented as a new `applied_range`
+   field (isolated from filter_label) on run_dashboard's return, threaded
+   through every natural-language surface (agentic + keyless SSE events,
+   POST /api/ask's JSON) but NOT POST /api/dashboard's structured-filters
+   response — that endpoint takes already-resolved dates and never parses
+   a range phrase, so there is nothing for it to reconcile against a
+   request.
+3. docs/PROJECT_STATE.md's original M11 log entry was left untouched
+   (matches this project's own convention of additive history) and a new
+   "M11-fix tamamlandı" section appended after it, rather than rewriting
+   history to pretend the cubes were always daily.
+4. FunnelAgent._ask_dashboard (the deterministic KeywordLLM path) keeps
+   calling parse_relative_range rather than resolve_relative_range: by
+   construction, extract_filters_from_text only ever sets
+   relative_range_text when the shared regex already matched, so
+   parse_relative_range can never return None there — resolve_
+   relative_range's structured error is specifically for the
+   agentic-tool call site, where an LLM supplies relative_range as an
+   independent, unverified argument.
+
+
+===============================================================================
+M11 ADDENDUM 2: SQL VISIBILITY ON DASHBOARD CARDS AND THE TRACE
+===============================================================================
+
+PROBLEM
+-------
+When a dashboard was built — the top-12 button or a natural-language
+build_dashboard call — the SQL behind each KPI and its result rows were
+not visible anywhere. Chat answers already had "Show SQL"/"Show data" via
+addAgentMessage(); dashboard cards had neither, and the agent trace's
+build_dashboard step was a dead end (no way to see what actually ran).
+
+FIX — BACKEND (reuses the existing sqlfmt choke point, does not duplicate it)
+------------------------------------------------------------------------
+1. src/agent/dashboard.py: run_dashboard() now adds "sql" to every card,
+   via `format_sql_for_display(sql)` — `sql` here is the KPI template
+   with THIS request's WHERE already composed in (build_where(...)), the
+   exact statement executed by driver.query(sql). The raw `sql` variable
+   passed to the driver is untouched; only a formatted copy goes on the
+   card, per sqlfmt.py's own documented contract. Both callers of
+   run_dashboard — the filtered POST /api/dashboard branch and the
+   build_dashboard agentic/keyless tool — inherit this for free (dash.py
+   is the single place cards are built for the cube-backed path).
+2. app/main.py: the legacy top-12 /api/dashboard branch adds
+   `"sql": result.get("sql")` to each card — `result` is
+   `agent.run_metric(key)`'s output, which already carries a formatted
+   "sql" via FunnelAgent._payload() (the pre-existing M6 choke point), so
+   no new formatting call was needed there at all.
+3. src/agent/agentic.py: the "dashboard" SSE event gains a `"call_id"`
+   field (the same id as the build_dashboard tool_call/tool_result pair)
+   so the frontend can attach the per-KPI SQL list onto that exact,
+   already-rendered trace step rather than guessing which step it belongs
+   to. The keyless deterministic path (FunnelAgent._ask_dashboard) never
+   goes through the tool-call loop, so its "dashboard" event has no
+   call_id — the frontend treats that as "create a new trace step
+   instead of attaching to one" (see below), not as an error case.
+
+FIX — FRONTEND (app/static/index.html)
+------------------------------------------------------------------------
+1. makeCard()'s existing collapsible "Details" area (`.card-notes`) now
+   also renders a "Show SQL" toggle (cardData.sql, via the existing
+   highlightSql()) and a "Show data" toggle (rows, via the existing
+   buildRowsTableHtml()) — the identical toggle pattern addAgentMessage()
+   already uses for chat answers, just re-attached to dashboard cards.
+   The Details area's visibility condition was widened from
+   `answer || consent_note` to also include `sql` or a non-empty `rows`.
+   renderDashboardGrid() (used by both the top-12 button and the filtered
+   "dashboard" SSE event, via renderFilteredDashboard()) now threads
+   `sql: c.sql` into each card's data — one code path covers both
+   surfaces, as it already did for chart/rows/answer.
+2. Trace: addStep()'s single-`opts.sql` rendering was factored out into a
+   shared `appendSqlDisclosure(body, sql, sqlList)` helper that also
+   supports a NEW `opts.sqlList` — an array of {title, sql} pairs,
+   rendered as one toggle opening a titled list of SQL blocks (one per
+   KPI). A new `trace.attachSqlList(callId, sqlList)` method looks up an
+   already-rendered step by its `data-call-id` (the same lookup markDone()
+   uses) and appends the disclosure post-hoc, since the build_dashboard
+   tool_call step is created before any SQL exists and the SQL only
+   arrives later in the "dashboard" event. In streamAsk()'s handling of
+   that event: when `event.call_id` is present (agentic path), the list
+   is attached onto the existing build_dashboard step; when absent
+   (keyless path, no tool-call loop), a brand-new step is created directly
+   from the event via `trace.addStep({..., sqlList})` — screenshotted
+   below, since this session runs keyless.
+3. CSS: `.trace-sql-list` / `.trace-sql-item` / `.trace-sql-item-title`
+   added (existing tokens only, no new hues per DESIGN.md), plus
+   `.trace-step .trace-sql-list pre.sql{display:block;}` — a higher-
+   specificity override of the pre-existing `.trace-step pre.sql{display:
+   none;}` rule, so a nested pre.sql inside the new list container isn't
+   blanket-hidden by the older single-SQL rule. No `!important` used, per
+   the codebase's established pattern (see the M9/M10 `[hidden]` fixes).
+   No new i18n strings needed — showSql/hideSql/showData/hideData/
+   cardNotesToggle were already translated (EN+TR) for the chat bubble.
+
+TESTS ADDED (399 total, was 396)
+------------------------------------------------------------------------
+- tests/test_dashboard.py: every unfiltered card's "sql" is a non-empty,
+  fully-composed SELECT (no leftover "{{where}}" placeholder); a filtered
+  card's sql contains the applied filter value (e.g. 'DE').
+- tests/test_api.py: POST /api/dashboard (both legacy top-12 and filtered
+  cube path) asserts "sql" on every card, and that a market filter's
+  value appears in it.
+- tests/test_api_stream.py: the keyless "dashboard" SSE event's cards
+  each carry "sql", and the event carries no call_id (documents the
+  keyless path's contract, not an oversight).
+- tests/test_agentic.py: the agentic "dashboard" event's cards carry
+  "sql", and its call_id equals the build_dashboard tool_call's own id.
+- tests/test_tools.py: build_dashboard()'s returned cards carry "sql"
+  containing the applied filter.
+Full suite: 399 passed, 0 failed.
+
+VALIDATION RUN
+------------------------------------------------------------------------
+Server: AGENT_LLM=keyword AGENT_DB=duckdb uvicorn app.main:app --port 8126
+Asked (chat, not the top-12 button): "Build me a KPI dashboard for the
+last 3 days for Germany" -> filter chip "Last 3 days · DE", funnel-stages
+card showing 1,336 test starts / 540 completions / 239 store redirects —
+small, plausible day-window numbers consistent with the M11-fix daily
+grain above.
+
+reports/m11sql_card_open_light.png
+  The funnel-stages card's Details area open: "Hide SQL" showing the
+  composed statement (gold.web_funnel_daily_cube, day_date BETWEEN two
+  literal dates, market = 'DE') and "Hide data" showing the three-row
+  result table beneath it. Light theme.
+reports/m11sql_trace_expanded.png
+  The collapsed trace re-expanded: the "Building dashboard" step's own
+  "Hide SQL" open, listing each KPI by title ("Funnel: starts,
+  completions, store redirects", ...) with its own SQL block — the full
+  per-KPI audit trail, independent of which card (if any) is currently
+  open. Keyless path, so this is the addStep({sqlList}) fallback branch,
+  not attachSqlList() — both are exercised by tests/test_agentic.py's
+  call_id assertion for the agentic branch.
+
+FILES CHANGED
+------------------------------------------------------------------------
+src/agent/dashboard.py    run_dashboard() cards gain "sql" (format_sql_for_display)
+app/main.py                legacy /api/dashboard cards gain "sql"
+src/agent/agentic.py       "dashboard" SSE event gains "call_id"; docstring updated
+app/static/index.html      card Details SQL/data toggles; trace sqlList
+                            support (addStep/attachSqlList/appendSqlDisclosure);
+                            new .trace-sql-list/.trace-sql-item(-title) CSS
+tests/test_dashboard.py    2 new tests
+tests/test_api.py          2 tests extended
+tests/test_api_stream.py   1 test extended
+tests/test_agentic.py      1 test extended
+tests/test_tools.py        1 new test

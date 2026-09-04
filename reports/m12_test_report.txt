@@ -1,0 +1,158 @@
+===============================================================================
+M12: REASONING-MODEL 400 FIX + FEEDBACK AFFORDANCES
+===============================================================================
+Two independent, user-approved items ahead of the GitHub push.
+
+
+ITEM 1 — OpenAI reasoning-model 400 fix
+-------------------------------------------------------------------------
+PROBLEM
+The user set the "balanced"/"max" tiers to newer OpenAI reasoning models
+(e.g. "gpt-5.6-luna" / "gpt-5.6-terra") and got:
+
+  Error 400 — "Function tools with reasoning_effort are not supported
+  for gpt-5.6-luna in /v1/chat/completions. To use function tools, use
+  /v1/responses or set reasoning_effort to 'none'."
+
+Some newer OpenAI reasoning models 400 on /v1/chat/completions when
+function tools (the agentic loop's run_sql/get_metric/search_knowledge/
+build_dashboard calls) are combined with any reasoning_effort other than
+"none". Model names cannot be hardcoded — the provider ships new ones
+faster than this codebase can track them.
+
+FIX (src/agent/llm.py)
+1. config/model_tiers.json entries may now be EITHER a plain model-name
+   string (unchanged M7a behavior) or an object:
+   {"model": "...", "reasoning_effort": "none"|"low"|"medium"|"high"}.
+   _parse_tier_entry() normalizes both shapes; a malformed entry is
+   skipped (previous tier value/shipped default stands), exactly like
+   the old "not a non-empty string" skip.
+2. New AGENT_REASONING_EFFORT env var applies a blanket reasoning_effort
+   to any tier that does NOT already name its own in the config object
+   (an explicit per-tier value always wins). AGENT_MODEL_FAST/BALANCED/
+   MAX still override a tier's MODEL only (plain string, unchanged
+   contract) -- the tier's reasoning_effort (from the config object or
+   the blanket env var) survives that override.
+3. New resolve_tier_config(tier) -> {"model", "reasoning_effort"}
+   companion to the existing resolve_tier_model(tier) -> str (which now
+   just returns resolve_tier_config(tier)["model"], so its own contract
+   and every existing caller are unchanged).
+4. get_llm() threads reasoning_effort from resolve_tier_config() into
+   _cached_openai_llm()/OpenAILLM(), cached per resolved model name as
+   before.
+5. SELF-HEALING (OpenAILLM._create_chat_completion, used by
+   plan/translate/chat_step alike): if reasoning_effort is left unset
+   (or set to something the model rejects) and a chat.completions call
+   raises the exact 400 above -- matched on the error TEXT via
+   _looks_like_reasoning_effort_400() ("reasoning_effort" plus a mention
+   of function tools / the endpoint names), NEVER a model-name list --
+   the call is retried ONCE with reasoning_effort="none", and that fix
+   is cached per model name in _REASONING_EFFORT_NONE_REQUIRED for the
+   rest of the process, so every later call for that model skips
+   straight to the working request. A one-line note is logged
+   ("OpenAI model %r requires reasoning_effort=none on chat.completions
+   -- applied automatically") when the self-heal fires.
+6. config/model_tiers.json updated to the user's models:
+   {"fast": "gpt-4o-mini",
+    "balanced": {"model": "gpt-5.6-luna", "reasoning_effort": "none"},
+    "max": {"model": "gpt-5.6-terra", "reasoning_effort": "none"}}
+7. Docs: docs/deploy_guide.md gained a new short TR section (8.1) on the
+   object shape, AGENT_REASONING_EFFORT, the self-healing behavior, and
+   why the /v1/responses alternative was left out of scope (the
+   self-heal already prevents the user from ever seeing the error).
+   docs/api_contract.md and src/agent/README.md's tier tables/examples
+   updated to match (kept in sync per this project's convention).
+
+KeywordLLM/ScriptedLLM untouched; tests stay hermetic (no network call
+at construction time, same as before M12).
+
+TESTS ADDED (tests/test_model_tiers.py, tests/test_llm_provider_selection.py)
+- TestResolveTierConfigM12 (9 tests): plain-string tier has no
+  reasoning_effort; object-shaped tier parses both fields; the blanket
+  AGENT_REASONING_EFFORT env fills in a tier that doesn't name its own;
+  a tier's own reasoning_effort wins over the blanket env; an invalid
+  global value is ignored; a per-tier model-name env override keeps the
+  tier's configured reasoning_effort; the legacy AGENT_MODEL env has no
+  reasoning_effort by default but still honors the blanket env; unknown
+  tier still raises ValueError.
+- test_openai_llm_carries_the_tier_objects_reasoning_effort: get_llm()
+  threads a tier object's reasoning_effort into the OpenAILLM it builds.
+- TestReasoningEffort400SelfHealing (3 tests): a fake client raising the
+  exact 400 text once is retried with reasoning_effort="none" and the
+  fix is cached (a second call skips straight to "none", one call, no
+  repeated failure); an unrelated exception (e.g. a 500) is never
+  swallowed; the cache is keyed per model name (one model's cached fix
+  does not leak into another model's OpenAILLM instance).
+- Three pre-existing tests updated because config/model_tiers.json's
+  real values changed under them (they read the actual shipped file,
+  not a fixture): test_shipped_defaults, test_per_tier_env_override
+  (balanced's expected model name), and the old
+  test_openai_llm_caches_per_resolved_model_name (renamed
+  test_same_tier_reuses_the_cached_instance -- balanced/max no longer
+  happen to share "gpt-4o", so the assertion needed a same-tier
+  same-instance check instead).
+
+
+ITEM 2 — Feedback affordances (app/static/index.html only)
+-------------------------------------------------------------------------
+Every agent answer bubble (addAgentMessage()) now shows a small ghost-
+icon row beneath it: thumbs-up, thumbs-down, and a "Feedback"/"Geri
+bildir" text button. Deliberately non-functional per the user's own
+request ("bir fonksiyonlarının olması gerekmiyor sadece görünse yeter"):
+
+- Clicking a thumb toggles a local ".selected" state (--accent color);
+  the two thumbs are mutually exclusive (selecting one clears the
+  other), and clicking an already-selected thumb deselects it back to
+  neutral. Nothing is sent anywhere -- purely local DOM state, gone on
+  reload (this is intentional: no persistence was requested).
+- The "Feedback" button has no click handler at all; its only affordance
+  is a title tooltip: "Demo — not wired" / "Demo — bağlı değil".
+
+Three new icon glyphs added to the existing inline-SVG ICONS set
+(24x24 viewBox, stroke currentColor, no fills — same drawn-from-scratch
+convention as every other icon, never a third-party asset): "thumb-up",
+"thumb-down", "comment" (used for the Feedback button's icon).
+
+Styling (DESIGN.md §5 "Ghost/icon buttons": transparent, --ink-muted
+icon, hover --accent-soft circle) — new .feedback-icon-btn (22x22
+circle, 14px icon, matches the existing .card-icon-btn micro size) and
+.feedback-text-btn (ghost pill, same hover). .feedback-icon-btn.selected
+sets color:var(--accent) — no new hues, existing tokens only, both
+themes (light/dark palettes already define --ink-muted/--accent/
+--accent-soft). New i18n keys (EN+TR): feedbackGoodTitle, feedbackBadTitle,
+feedbackButton, feedbackNotWiredTitle.
+
+
+VALIDATION
+-------------------------------------------------------------------------
+pytest: 412 passed (baseline 399 + 13 new/renamed tests), 0 failed.
+Server: AGENT_LLM=keyword AGENT_DB=duckdb uvicorn app.main:app --port 8127
+
+reports/m12_feedback_row_light.png
+  An answer bubble ("Which channel has the best D30 retention?") with
+  its feedback row visible, nothing selected. Light theme.
+reports/m12_feedback_row_selected_light.png
+  Same bubble after clicking thumbs-up: the thumb is shown selected
+  (--accent color) while thumbs-down and "Feedback" stay --ink-muted.
+  Light theme.
+reports/m12_feedback_row_dark.png
+  Same state (thumb still selected) after toggling the theme — dark
+  palette, contrast and selected-state readability confirmed.
+
+
+FILES CHANGED
+-------------------------------------------------------------------------
+src/agent/llm.py           tier-object parsing, resolve_tier_config(),
+                            AGENT_REASONING_EFFORT, OpenAILLM reasoning_
+                            effort + 400 self-healing, get_llm() wiring
+config/model_tiers.json    updated to the user's balanced/max models
+docs/deploy_guide.md       new §8.1 (TR): object shape, self-healing,
+                            /v1/responses alternative noted out of scope
+docs/api_contract.md       tier example + resolution-order text updated
+src/agent/README.md        model_tiers.json / env var table updated
+app/static/index.html      feedback row (icons, CSS, addAgentMessage
+                            markup + click wiring), 3 new ICONS glyphs,
+                            4 new EN/TR i18n keys
+tests/test_model_tiers.py          +9 new tests, 3 tests updated for the
+                                    new shipped config values
+tests/test_llm_provider_selection.py  +3 new self-healing tests

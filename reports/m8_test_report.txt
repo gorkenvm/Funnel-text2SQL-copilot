@@ -1,0 +1,169 @@
+Module M8 — final UX round (Sofkar-inspired) — test report
+=============================================================
+Date: 2026-09-03
+
+SCOPE
+-----
+Six features added to app/static/index.html plus one new backend endpoint
+(GET /api/catalog) in app/main.py. No changes to src/agent internals.
+
+1. Answer-latency badge (chat bubble + per dashboard card)
+2. CSV download (chat "Show data" table + every dashboard card)
+3. Dashboard layout persistence (funnelCopilotBoard_v1: order/closed/chartType)
+4. Stat-card ("Kart") view for single-row results (chat + dashboard)
+5. Data catalog side panel (drawer) + GET /api/catalog
+6. Empty-state welcome block in the chat panel
+
+PYTEST
+------
+Command: python3 -m pytest -q
+Result : 298 passed (297 baseline + 1 new: test_catalog_lists_medallion_layers
+         in tests/test_api.py). No regressions; no tests skipped or xfailed.
+
+Baseline captured before any change (for the record): 297 passed.
+
+NEW BACKEND SURFACE
+--------------------
+GET /api/catalog — app/main.py
+  - Returns {"layers": {"bronze": [...], "silver": [...], "gold": [...]}},
+    built directly from agent.medallion.BRONZE_TABLES / SILVER_TABLES /
+    GOLD_TABLES (imported, not re-derived) so it can never drift from the
+    agent's own table whitelist.
+  - Each entry is {"name": "<layer>.<object>"} plus an optional "comment"
+    (the object's COMMENT ON text) when cheaply available.
+  - Comments are fetched with exactly two whole-catalog queries total
+    (duckdb_tables()/duckdb_views(), both scoped to bronze/silver/gold) —
+    never one query per object, per the spec's "skip if it needs extra
+    queries per object" rule. Both queries are wrapped in try/except so a
+    Databricks-backed deployment (no such introspection functions) simply
+    ships without comments instead of 500ing.
+  - Row counts intentionally omitted (same reasoning).
+  - Reuses _json_safe() for the response, per the task's backend-change
+    constraint.
+  - Documented in docs/api_contract.md under "GET /api/catalog (M8)".
+  - Tested in tests/test_api.py::test_catalog_lists_medallion_layers —
+    checks all three layers present, gold has >= 12 entries, every name is
+    qualified with its own layer prefix, and any comment present is a
+    non-empty string.
+
+PLAYWRIGHT VERIFICATION
+------------------------
+Server: uvicorn app.main:app, run keyless (OPENAI_API_KEY="" ANTHROPIC_API_KEY="")
+so /health reports "llm": "keyword" — deterministic, no network calls, fast.
+
+Screenshots (reports/m8_*.png):
+
+  m8_empty_state_welcome.png
+      Fresh page load, no messages sent yet. Centered "What do you want to
+      learn?" block with subtext mentioning the synthetic Phonak funnel
+      data, and the chip set rendered as 6 larger suggestion cards. Chip
+      row at top is untouched/unchanged.
+
+  m8_answer_latency_csv.png
+      After asking "Where is the biggest drop-off?": the agent bubble
+      shows a muted "0.2s" latency badge above the markdown answer, and a
+      "⬇" CSV button next to "Show SQL"/"Show data". The resulting
+      single-question chart card (top of the dashboard column) also shows
+      its own latency badge next to the chart-type/CSV/close icons.
+
+  m8_dashboard_catalog_open.png
+      Top-12 dashboard built, catalog drawer open on the left showing the
+      full bronze/silver/gold tree (all names qualified, e.g.
+      "gold.completion_by_channel_device"). Every dashboard card shows its
+      own latency badge, chart-type switch icon, CSV download icon and
+      close (x) — confirmed by direct DOM inspection that clicking a
+      catalog item ("bronze.web_events") inserted that exact qualified
+      name into the chat's question input.
+
+  m8_layout_persisted_after_reload.png
+      Scripted sequence: build dashboard -> close the "Funnel overview"
+      card -> switch "Step-to-step conversion rates" from bar to line ->
+      full page reload -> rebuild dashboard. Screenshot + assertions show:
+        - "Funnel overview" stays closed (not re-added) after reload.
+        - "Step-to-step conversion rates" keeps the line-chart type chosen
+          before reload (visible as the area/line chart + the "switch
+          type" icon now showing the line glyph).
+        - The remaining 11 cards keep their persisted relative order,
+          asserted equal before/after reload.
+      "Reset layout" was also exercised: one click brought "Funnel
+      overview" back at its original (registry) position, confirming
+      the reset path restores defaults.
+
+  m8_stat_tile_fixture.png
+      None of the 12 registered dashboard KPIs happens to return a
+      single-row result with the current synthetic dataset, so the "Kart"
+      stat-tile view never triggers inside the standard top-12 dashboard
+      or via the keyless demo's registry-only /api/ask path (no free-form
+      ad-hoc SQL is reachable without a tool-calling LLM). To verify the
+      feature's actual (unmodified) code directly, this screenshot runs
+      the same production isStatShape()/statShapeFields()/fmtStatValue()
+      functions — extracted verbatim from app/static/index.html, with one
+      additional line exposing them on `window` for the test harness only
+      (never shipped) — against three synthetic result shapes:
+        - 1 row x 1 numeric column -> big-number tile, "128,453" (EN).
+        - 1 row x 2 columns (1 label + 1 numeric, a fraction) -> "28.4%"
+          with the label column shown underneath.
+        - Same 1-column numeric shape in "tr" -> "128.453" (Turkish
+          grouping: period as thousands separator), proving the
+          locale-aware formatting branches correctly on the active
+          language, not just the browser locale.
+      This is noted as a deviation below.
+
+  m8_mobile_welcome.png / m8_mobile_catalog.png (bonus, 390x844 viewport)
+      Confirms the stacked mobile layout is unaffected by the welcome
+      block, and that opening the catalog drawer overlays the chat panel
+      (fixed position, backdrop) rather than resizing/pushing it — it
+      never steals chat space on a narrow viewport.
+
+CSV DOWNLOAD — CONTENT-LEVEL CHECK
+------------------------------------
+Verified via Playwright's expect_download (not just a screenshot):
+  - EN question -> downloaded compare-pairing-rate-ios-vs-android-by-market.csv
+    First 3 bytes: EF BB BF (UTF-8 BOM), followed by a valid comma-header
+    CSV body with the same rows shown in "Show data".
+  - TR question (Turkish chars in the question) -> BOM still present,
+    row data (market/platform names) round-trips correctly through
+    utf-8-sig decoding. The filename itself is ASCII-slugified (Turkish
+    diacritics stripped) by design, since it becomes a filesystem path.
+
+DEVIATIONS / NOTES
+-------------------
+1. Stat-card verification used an extracted-and-hooked copy of the app's
+   own JS (see m8_stat_tile_fixture.png above) rather than the live app,
+   because none of the 12 registered gold KPIs — nor the keyless demo's
+   registry-only ask() path — ever produces a genuine single-row result
+   to trigger the "Kart" view naturally. The stat-tile code path itself
+   is unmodified production code; only the verification harness is
+   synthetic. This mirrors the task's own "if reproducible" hedge for
+   screenshot (c).
+2. The data catalog panel was implemented as a fixed-position, backdrop-
+   dismissible drawer toggled from a header button ("📚 Catalog"), sliding
+   in from the left edge of the whole page rather than being permanently
+   docked inside the dashboard column — chosen specifically so it never
+   resizes/steals space from the chat panel on mobile (verified above),
+   per the task's explicit constraint.
+3. Per-card dashboard latency is measured as elapsed time from the
+   /api/dashboard request start to the moment each card is constructed
+   in the render loop (not a separate timing per metric on the backend,
+   since all 12 metrics return in a single response) — cards later in the
+   grid show a marginally larger elapsed time, which is an accurate
+   (if small) reflection of sequential client-side render cost.
+4. All six features' new user-facing strings are present in both the EN
+   and TR i18n dictionaries (I18N.en / I18N.tr) in app/static/index.html.
+5. No changes were made under src/agent/ — the catalog endpoint only
+   imports the existing BRONZE_TABLES/SILVER_TABLES/GOLD_TABLES tuples
+   from agent.medallion, per the task's backend-change constraint.
+6. Every new localStorage access (funnelCopilotBoard_v1 read/write) is
+   wrapped in try/catch, matching the existing funnelCopilotChips_v1 /
+   funnelCopilotTier_v1 convention; corrupt/unexpected shapes fall back to
+   defaults exactly like the existing chip-state loader.
+
+FILES CHANGED
+--------------
+  app/main.py                 (+GET /api/catalog, +_CATALOG_LAYERS,
+                                +_catalog_comments helper)
+  app/static/index.html       (all 6 frontend features; CSS/i18n/JS)
+  docs/api_contract.md        (+"GET /api/catalog (M8)" section)
+  tests/test_api.py           (+test_catalog_lists_medallion_layers)
+  reports/m8_test_report.txt  (this file)
+  reports/m8_*.png            (screenshots, see above)

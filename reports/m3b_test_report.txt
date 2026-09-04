@@ -1,0 +1,203 @@
+================================================================================
+M3b Test Report — Databricks integration (load script + DatabricksDriver
+catalog/schema wiring) + UI polish (markdown rendering, prompt guardrail
+against markdown tables, persistent collapsible trace)
+================================================================================
+Date: 2026-09-02
+Scope: app/static/index.html, app/static/vendor/marked.min.js,
+       src/agent/agentic.py (system prompt), src/agent/db.py
+       (DatabricksDriver), scripts/load_to_databricks.py,
+       docs/deploy_guide.md, docker-compose.yml, requirements.txt
+Command: python3 -m pytest -v
+
+No network call to Databricks or OpenAI is made by any test in this suite:
+  - api.openai.com / api.anthropic.com / *.databricks.com are NOT reachable
+    from this sandbox and are never called.
+  - tests/test_databricks_loader.py::TestRunWithMockedConnection exercises
+    scripts.load_to_databricks.run() against a plain fake connection/cursor
+    object (FakeConnection/FakeCursor), never the real
+    databricks-sql-connector network path.
+  - tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema
+    injects a fake `databricks.sql` module into sys.modules (a fake
+    connect() that just records its kwargs) so agent.db.DatabricksDriver's
+    lazy `from databricks import sql as dbsql` picks it up with zero real
+    package behaviour and zero network.
+  - tests/conftest.py's autouse AGENT_LLM=keyword still holds; nothing here
+    changes that.
+
+--------------------------------------------------------------------------------
+PYTEST OUTPUT (full verbose run, 133 tests = 107 pre-existing + 26 new)
+--------------------------------------------------------------------------------
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/claude/work/sonova_case
+plugins: anyio-4.13.0
+collecting ... collected 133 items
+
+[... 107 pre-existing tests from test_agent_e2e.py, test_agentic.py,
+     test_api.py, test_api_stream.py, test_funnel_truth.py,
+     test_guardrails.py, test_knowledge.py, test_llm_provider_selection.py,
+     test_metrics.py, test_tools.py — all PASSED, unchanged in behaviour ...]
+
+tests/test_databricks_loader.py::TestLoadSettings::test_missing_all_required_vars_raises_with_every_name PASSED
+tests/test_databricks_loader.py::TestLoadSettings::test_missing_one_required_var_raises_naming_only_that_one PASSED
+tests/test_databricks_loader.py::TestLoadSettings::test_defaults_catalog_and_schema_when_unset PASSED
+tests/test_databricks_loader.py::TestLoadSettings::test_explicit_catalog_and_schema_override_defaults PASSED
+tests/test_databricks_loader.py::TestStatementGeneration::test_schema_ddl PASSED
+tests/test_databricks_loader.py::TestStatementGeneration::test_volume_ddl PASSED
+tests/test_databricks_loader.py::TestStatementGeneration::test_volume_path PASSED
+tests/test_databricks_loader.py::TestStatementGeneration::test_put_statement_uses_overwrite_and_volume_path PASSED
+tests/test_databricks_loader.py::TestStatementGeneration::test_ctas_statement_selects_from_volume_parquet PASSED
+tests/test_databricks_loader.py::TestStatementGeneration::test_count_statement_targets_fully_qualified_table PASSED
+tests/test_databricks_loader.py::TestStatementGeneration::test_statements_are_idempotent_by_construction PASSED
+tests/test_databricks_loader.py::TestLocalRowCounts::test_local_row_count_matches_pyarrow_directly[web_events] PASSED
+tests/test_databricks_loader.py::TestLocalRowCounts::test_local_row_count_matches_pyarrow_directly[app_events] PASSED
+tests/test_databricks_loader.py::TestLocalRowCounts::test_local_row_count_matches_pyarrow_directly[id_bridge] PASSED
+tests/test_databricks_loader.py::TestLocalRowCounts::test_ground_truth_is_never_in_table_names PASSED
+tests/test_databricks_loader.py::TestLocalRowCounts::test_missing_local_file_raises_file_not_found PASSED
+tests/test_databricks_loader.py::TestRunWithMockedConnection::test_success_all_counts_match PASSED
+tests/test_databricks_loader.py::TestRunWithMockedConnection::test_row_count_mismatch_returns_false PASSED
+tests/test_databricks_loader.py::TestRunWithMockedConnection::test_connection_failure_is_caught_and_returns_false PASSED
+tests/test_databricks_loader.py::TestRunWithMockedConnection::test_turkish_hint_for_permission_error PASSED
+tests/test_databricks_loader.py::TestRunWithMockedConnection::test_turkish_hint_for_warehouse_not_found PASSED
+tests/test_databricks_loader.py::TestRunWithMockedConnection::test_turkish_hint_for_hostname_error PASSED
+tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema::test_defaults_workspace_and_sonova_when_unset PASSED
+tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema::test_passes_explicit_catalog_and_schema_from_env PASSED
+tests/test_databricks_loader.py::TestDatabricksDriverCatalogSchema::test_missing_required_env_raises_before_importing_connector PASSED
+tests/test_databricks_loader.py::TestSystemPromptMarkdownGuidance::test_prompt_forbids_markdown_tables_and_headings PASSED
+
+============================= 133 passed in 10.18s ==============================
+
+--------------------------------------------------------------------------------
+NEW TEST FILE (26 new tests, all in tests/test_databricks_loader.py)
+--------------------------------------------------------------------------------
+TestLoadSettings                      4 tests  - required-env validation
+                                                  (all/one missing -> ConfigError
+                                                  naming exactly the missing
+                                                  vars), catalog/schema default
+                                                  vs. explicit override
+TestStatementGeneration                7 tests  - pure SQL-string builders:
+                                                  CREATE SCHEMA/VOLUME IF NOT
+                                                  EXISTS, PUT ... OVERWRITE,
+                                                  CREATE OR REPLACE TABLE ...
+                                                  parquet.`/Volumes/...`, the
+                                                  COUNT(*) verification query,
+                                                  and an explicit idempotency
+                                                  check
+TestLocalRowCounts                    5 tests  - local row counts via pyarrow
+                                                  match pq.read_table directly
+                                                  for all 3 tables; confirms
+                                                  _ground_truth is never in
+                                                  TABLE_NAMES; missing-file
+                                                  FileNotFoundError
+TestRunWithMockedConnection            6 tests  - run() end-to-end against a
+                                                  fake connection/cursor: exact
+                                                  statement order (schema,
+                                                  volume, then PUT/CTAS/COUNT
+                                                  per table), success path,
+                                                  row-count-mismatch -> False,
+                                                  a mid-run exception caught
+                                                  and turned into False (never
+                                                  raises), and the Turkish
+                                                  hint text for the three most
+                                                  likely failure modes
+TestDatabricksDriverCatalogSchema      3 tests  - DatabricksDriver passes
+                                                  catalog="workspace"/
+                                                  schema="sonova" by default
+                                                  and honours
+                                                  DATABRICKS_CATALOG/SCHEMA
+                                                  overrides, via a fake
+                                                  databricks.sql module
+                                                  injected into sys.modules;
+                                                  missing required env still
+                                                  raises EnvironmentError
+                                                  before any import happens
+TestSystemPromptMarkdownGuidance       1 test   - agentic system prompt text
+                                                  explicitly forbids markdown
+                                                  tables/headings
+
+--------------------------------------------------------------------------------
+MANUAL OFFLINE VERIFICATION (not part of pytest, done during implementation)
+--------------------------------------------------------------------------------
+1. scripts/load_to_databricks.py was run end-to-end against a fully faked
+   databricks.sql module (injected the same way the tests do) covering the
+   entire happy path: schema/volume DDL -> PUT -> CTAS -> COUNT per table,
+   printing a verification summary that matched the real local row counts
+   (web_events=307529, app_events=80156, id_bridge=6863). No network used.
+2. `python3 scripts/load_to_databricks.py` with a clean environment (no
+   DATABRICKS_* vars, env -i) printed the expected Turkish hint and exited 1,
+   without ever printing .env contents.
+3. app/static/vendor/marked.min.js (marked@12.0.2, official npm dist,
+   installed via `npm install marked@12.0.2` in /tmp and copied — never
+   fetched at page-load time) was exercised under jsdom for:
+   - basic markdown (bold, heading, list) rendering correctly,
+   - an XSS probe (`<img onerror=...>`, `<script>...`) in the "LLM answer"
+     text coming back fully HTML-escaped and inert (proves the
+     encode-entities-before-marked step is effective),
+   - GFM table output correctly wrapped in .md-table-wrap/.md-table,
+   - the window.marked-missing fallback still rendering the old plain
+     (fully escaped) text.
+4. The extracted <script> block of app/static/index.html was checked with
+   `node --check` for syntax validity after every edit.
+
+--------------------------------------------------------------------------------
+RESULT
+--------------------------------------------------------------------------------
+133 passed, 0 failed, 0 skipped, 0 errors.
+All 107 pre-existing M1/M2/M3a tests remain green, unmodified in behaviour.
+
+--------------------------------------------------------------------------------
+WHAT CAN ONLY BE VERIFIED ON THE USER'S OWN MACHINE
+--------------------------------------------------------------------------------
+This sandbox has no network access to Databricks or a browser to load the
+vendored JS files against a real DOM outside jsdom, so the following are
+NOT covered by the automated suite or by the manual checks above and need
+the user's own verification (see docs/deploy_guide.md section 5 for the
+exact steps):
+
+1. Actually opening a Databricks Free Edition account, finding the SQL
+   Warehouse "Server hostname" / "HTTP path", and generating a PAT.
+2. Running `python scripts/load_to_databricks.py` against a REAL warehouse
+   — the script's SQL generation and control flow are unit-tested, but the
+   real PUT/staging-ingestion round trip, real Unity Catalog volume/schema
+   creation, and real network-error surfaces (actual 403 text, actual DNS
+   failure text, etc.) can only be observed live. The Turkish hint matcher
+   was tested against representative error strings, not the exact strings
+   Databricks' servers return.
+3. Setting AGENT_DB=databricks in .env, restarting the app, and confirming
+   GET /health returns {"driver": "databricks", ...} against the real
+   warehouse (this sandbox only proves DatabricksDriver *would* call
+   databricks.sql.connect(..., catalog=..., schema=...) correctly, via a
+   fake module).
+4. Visual/browser verification of the M3a UI polish in Part A: markdown
+   rendering in a real browser (tables, bold, lists rendering visually
+   correctly and matching the .md-table / .fallback-table look), the
+   persistent <details class="trace-details"> collapsing/expanding
+   correctly in the DOM after a live SSE answer, and the TR label
+   "Ajan izini gör (N adım)" rendering correctly. This sandbox verified
+   the JS logic (via jsdom + node --check) but not an actual rendered page.
+5. Confirming a real LLM (OpenAI/Anthropic) actually follows the new
+   system-prompt instruction to avoid markdown tables/headings in its
+   final answer — the prompt text change itself is unit-tested
+   (test_prompt_forbids_markdown_tables_and_headings), but model
+   compliance can only be observed with a live API key, which this
+   sandbox does not have.
+
+--------------------------------------------------------------------------------
+DEVIATIONS FROM THE TASK SPEC (with reasons)
+--------------------------------------------------------------------------------
+1. requirements.txt keeps pyarrow under its original M1 comment ("Core
+   dependencies for the ask-the-funnel agent") since it was already listed
+   there (pyarrow>=15.0) before this task — no new line was needed, only
+   confirmed it was present.
+2. docker-compose.yml was updated (not explicitly requested) to also pass
+   DATABRICKS_CATALOG / DATABRICKS_SCHEMA through to the container
+   environment (defaulting to workspace/sonova), so a Docker Compose
+   deployment stays correct now that DatabricksDriver reads those two vars
+   — otherwise a user who only edits .env would see docker compose runs
+   silently ignore a custom catalog/schema.
+3. src/agent/README.md's environment-variable table was extended with the
+   two new DATABRICKS_CATALOG/DATABRICKS_SCHEMA rows for consistency; not
+   explicitly requested but it is the single source of truth for env vars
+   in the M1 module and was already stale without this.

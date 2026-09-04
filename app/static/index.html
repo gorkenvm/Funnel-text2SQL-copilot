@@ -1,0 +1,4244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phonak Funnel Copilot — synthetic data demo</title>
+<script src="./vendor/echarts.min.js"
+        onerror="var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js';document.head.appendChild(s);"></script>
+<script src="./vendor/marked.min.js"></script>
+<!-- M7b: vendored highlight.js core + common languages (incl. SQL) for SQL
+     syntax highlighting in answer bubbles / trace steps. If this fails to
+     load, window.hljs stays undefined and every call site below falls back
+     to the plain escaped-text rendering that shipped before M7b. -->
+<script src="./vendor/highlight.min.js"></script>
+<style>
+  /* ---------- DESIGN.md §0/§3: self-hosted brand fonts ----------
+     Söhne -> Inter, Teodor -> Fraunces (declared substitution). Vendored
+     woff2 only (latin subset), font-display:swap, system-stack fallbacks
+     always present per §3 so text never disappears while loading. */
+  @font-face{
+    font-family:"Inter";
+    font-style:normal;
+    font-weight:400;
+    font-display:swap;
+    src:url("./vendor/fonts/inter-latin-400.woff2") format("woff2");
+  }
+  @font-face{
+    font-family:"Inter";
+    font-style:normal;
+    font-weight:500;
+    font-display:swap;
+    src:url("./vendor/fonts/inter-latin-500.woff2") format("woff2");
+  }
+  @font-face{
+    font-family:"Inter";
+    font-style:normal;
+    font-weight:700;
+    font-display:swap;
+    src:url("./vendor/fonts/inter-latin-700.woff2") format("woff2");
+  }
+  @font-face{
+    font-family:"Fraunces";
+    font-style:normal;
+    font-weight:600;
+    font-display:swap;
+    src:url("./vendor/fonts/fraunces-latin-600.woff2") format("woff2");
+  }
+  :root{
+    /* ---- DESIGN.md §1: color tokens (UI) ---- */
+    --ink:#201F1C;
+    --ink-soft:#55534E;
+    --ink-muted:#8A877F;
+    --surface:#FFFFFF;
+    --surface-alt:#F5F5F3;
+    --surface-ink:#17231C;
+    --border:#E4E3DE;
+    --border-strong:#C9C7BF;
+    --action:#CFFB5E;
+    --action-hover:#C2F13F;
+    --accent:#154734;
+    --accent-soft:#E7F0EA;
+    --accent-mid:#468254;
+    --danger:#B3261E;
+    /* Light error-bubble tint: DESIGN.md defines --danger but no
+       "danger-soft" surface token — derived here as a flat, bordered tint
+       (never a shadow, per the flat-elevation rule) so error bubbles read
+       as danger without inventing a new hue. */
+    --danger-soft:#FBEAE7;
+    --warn-bg:#FDF3D7;
+    --warn-border:#E9C46A;
+    --warn-ink:#7A5A00;
+
+    /* ---- M10 §1: fixed lime-fill text color ----
+       --action never changes between themes (§1b), and the text sitting on
+       it must not either — using var(--ink) directly would flip to a light
+       color in dark mode and vanish against the still-light lime fill. */
+    --action-ink:#201F1C;
+
+    /* ---- M10 §5: brand-mark center bar (light value; dark overrides to var(--action)) ---- */
+    --brand-center:#9CC23F;
+
+    /* ---- M10 §1b "Dark rules": the two documented per-component token
+       swaps (chat bubble fill, segmented-control selected state) — kept as
+       indirect semantic tokens so the components themselves still only
+       ever reference a token, never branch on [data-theme] directly. ---- */
+    --bubble-user-bg:var(--accent);
+    --bubble-user-text:#fff;
+    --segment-active-bg:var(--accent);
+    --segment-active-text:#fff;
+    --segment-active-border:transparent;
+
+    /* ---- M10: catalog bronze-layer chip tint (light; dark overrides) ---- */
+    --catalog-bronze-bg:#F1E4D6;
+    --catalog-bronze-ink:#8A5A2B;
+
+    /* ---- legacy variable names kept as aliases (minimize diff churn) ---- */
+    --bg:var(--surface-alt);
+    --panel:var(--surface);
+    --text:var(--ink);
+    --text-muted:var(--ink-muted);
+    --accent-dark:var(--accent);
+
+    /* ---- DESIGN.md §4: 8px spacing grid ---- */
+    --space-1:8px;
+    --space-2:16px;
+    --space-3:24px;
+    --space-4:32px;
+
+    /* ---- DESIGN.md §4: radius scale (buttons/chips 8, inputs 10, cards/panels 16, pills 999) ---- */
+    --radius-sm:8px;
+    --radius-md:10px;
+    --radius-lg:16px;
+    --radius-pill:999px;
+    --radius:var(--radius-lg); /* legacy alias — historical uses were panels/cards */
+
+    /* ---- DESIGN.md §4: elevation (flat by default; one shadow for floating layers) ---- */
+    --shadow-float:0 8px 24px rgba(32,31,28,.10);
+
+    /* ---- DESIGN.md §6: motion ---- */
+    --ease-out:cubic-bezier(0,0,.2,1);
+    --dur-fast:150ms;
+    --dur-drawer:200ms;
+
+    /* ---- DESIGN.md §3: typography ---- */
+    --font-ui:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-display:"Fraunces",Georgia,serif;
+
+    font-size:16px;
+  }
+
+  /* ---------- DESIGN.md §1b: dark theme token swap ----------
+     Same custom properties, new values — components below never branch on
+     [data-theme] themselves (the two documented exceptions, bubble/segment
+     tokens, are still just tokens). Written twice on purpose: once inside
+     the system-preference media query (guarded by :not([data-theme="light"])
+     so an explicit light choice still wins over a dark system), once for
+     the explicit toggle — see DESIGN.md §1b/§8. */
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ink:#ECEFEA;
+      --ink-soft:#B7BDB4;
+      --ink-muted:#868D83;
+      --surface:#17231C;
+      --surface-alt:#101815;
+      --surface-ink:#0C1310;
+      --border:#26332B;
+      --border-strong:#3A4A40;
+      --action:#CFFB5E;
+      --action-hover:#DCFC82;
+      --accent:#7FC79A;
+      --accent-soft:#1E2F26;
+      --accent-mid:#5FA878;
+      --danger:#E5736C;
+      --danger-soft:#3A211F;
+      --warn-bg:#33290F;
+      --warn-border:#8A6D1F;
+      --warn-ink:#E9C46A;
+      --brand-center:var(--action);
+      --bubble-user-bg:var(--accent-soft);
+      --bubble-user-text:var(--ink);
+      --segment-active-bg:var(--accent-soft);
+      --segment-active-text:var(--accent);
+      --segment-active-border:var(--accent);
+      --catalog-bronze-bg:#33230F;
+      --catalog-bronze-ink:#D2A466;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#ECEFEA;
+    --ink-soft:#B7BDB4;
+    --ink-muted:#868D83;
+    --surface:#17231C;
+    --surface-alt:#101815;
+    --surface-ink:#0C1310;
+    --border:#26332B;
+    --border-strong:#3A4A40;
+    --action:#CFFB5E;
+    --action-hover:#DCFC82;
+    --accent:#7FC79A;
+    --accent-soft:#1E2F26;
+    --accent-mid:#5FA878;
+    --danger:#E5736C;
+    --danger-soft:#3A211F;
+    --warn-bg:#33290F;
+    --warn-border:#8A6D1F;
+    --warn-ink:#E9C46A;
+    --brand-center:var(--action);
+    --bubble-user-bg:var(--accent-soft);
+    --bubble-user-text:var(--ink);
+    --segment-active-bg:var(--accent-soft);
+    --segment-active-text:var(--accent);
+    --segment-active-border:var(--accent);
+    --catalog-bronze-bg:#33230F;
+    --catalog-bronze-ink:#D2A466;
+  }
+  /* Theme-swap transition guard (§6 "theme switch: none (instant token
+     swap)") — toggled briefly by JS around the [data-theme] flip so the
+     many hover/focus transitions elsewhere don't animate the color swap
+     itself. */
+  .theme-swap,.theme-swap *{transition:none !important;}
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-ui);
+    display:flex;
+    flex-direction:column;
+    min-height:100vh;
+  }
+  body,input,button{font-variant-numeric:tabular-nums;}
+
+  /* ---------- DESIGN.md §7: focus-visible rings everywhere ---------- */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  [tabindex]:focus-visible,
+  summary:focus-visible{
+    outline:2px solid var(--accent);
+    outline-offset:2px;
+  }
+
+  /* ---------- DESIGN.md §6: motion (prefers-reduced-motion) ---------- */
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{
+      animation-duration:.001ms !important;
+      animation-iteration-count:1 !important;
+      transition-duration:.001ms !important;
+      scroll-behavior:auto !important;
+    }
+  }
+
+  /* ---------- header ---------- */
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:var(--space-2);
+    padding:var(--space-2) var(--space-3);
+    background:var(--panel);
+    border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+  }
+  .brand{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  /* ---------- M10 §5: brand lockup (sound-bars mark + wordmark) ---------- */
+  .brand-mark{display:inline-flex;flex:0 0 auto;}
+  .brand-mark svg{display:block;}
+  .eq-mark svg .eq-bar{fill:var(--accent);transform-box:fill-box;transform-origin:50% 100%;}
+  .eq-mark svg .eq-bar-center{fill:var(--brand-center);}
+  /* Thinking animation (§5/§6): equalizer bounce, ONLY while `.thinking` is
+     present (submit -> answer/error), staggered so the center bar leads. */
+  .eq-mark.thinking svg .eq-bar{animation:eq-bounce .9s ease-in-out infinite;}
+  .eq-mark.thinking svg .eq-bar:nth-child(1),
+  .eq-mark.thinking svg .eq-bar:nth-child(5){animation-delay:0s;}
+  .eq-mark.thinking svg .eq-bar:nth-child(2),
+  .eq-mark.thinking svg .eq-bar:nth-child(4){animation-delay:.15s;}
+  .eq-mark.thinking svg .eq-bar:nth-child(3){animation-delay:.3s;}
+  @keyframes eq-bounce{0%,100%{transform:scaleY(.55);}50%{transform:scaleY(1);}}
+  @keyframes eq-opacity-pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+  @media (prefers-reduced-motion:reduce){
+    /* Overrides the page-wide reduced-motion rule (also !important) with a
+       gentle opacity pulse instead of a frozen frame, per §6. */
+    .eq-mark.thinking svg .eq-bar{animation:eq-opacity-pulse 1.6s ease-in-out infinite !important;}
+  }
+  h1.brand-text{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin:0;font-weight:400;}
+  .brand-name{font-family:var(--font-display);font-weight:600;font-size:20px;color:var(--ink);}
+  .brand-demo{font-size:.8rem;color:var(--ink-soft);}
+  .badge{
+    font-size:.62rem;
+    font-weight:600;
+    letter-spacing:.02em;
+    color:var(--accent);
+    background:var(--accent-soft);
+    border:1px solid var(--accent);
+    border-radius:var(--radius-pill);
+    padding:2px 8px;
+    white-space:nowrap;
+  }
+  /* ---------- M10 §5: icon set (inline SVG, no third-party assets) ---------- */
+  .icon{display:block;stroke:currentColor;}
+  .btn-icon{display:inline-flex;align-items:center;margin-right:6px;}
+  .ghost-icon-btn{
+    border:none;
+    background:transparent;
+    color:var(--ink-muted);
+    border-radius:50%;
+    width:30px;
+    height:30px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    padding:0;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+  }
+  .ghost-icon-btn:hover{background:var(--accent-soft);color:var(--accent);}
+  .theme-toggle-btn .theme-icon-moon{display:none;}
+  .theme-toggle-btn.is-dark .theme-icon-sun{display:none;}
+  .theme-toggle-btn.is-dark .theme-icon-moon{display:inline-flex;}
+  /* ---------- M10 §5: connection indicator ---------- */
+  .conn-indicator{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:.74rem;
+    font-weight:600;
+    color:var(--ink-muted);
+    white-space:nowrap;
+  }
+  .conn-dot{
+    width:8px;
+    height:8px;
+    border-radius:50%;
+    background:var(--ink-muted);
+    flex:0 0 auto;
+  }
+  .conn-dot.databricks{background:#2F9E63;}
+  .conn-dot.duckdb{background:var(--ink-muted);}
+  .conn-dot.offline{background:var(--danger);}
+  .conn-dot.pulse{animation:conn-pulse 2s ease-out 1;}
+  @keyframes conn-pulse{
+    0%{transform:scale(1);opacity:1;}
+    40%{transform:scale(1.8);opacity:.35;}
+    100%{transform:scale(1);opacity:1;}
+  }
+  .lang-toggle{
+    display:flex;
+    border:1px solid var(--border);
+    border-radius:var(--radius-pill);
+    overflow:hidden;
+  }
+  .lang-toggle button{
+    border:1px solid transparent;
+    margin:-1px;
+    background:var(--surface);
+    color:var(--ink-soft);
+    font-weight:700;
+    font-size:.8rem;
+    padding:6px 14px;
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+  }
+  .lang-toggle button.active{
+    background:var(--segment-active-bg);
+    color:var(--segment-active-text);
+    border-color:var(--segment-active-border);
+  }
+
+  /* ---------- header controls (M7b: model tier + memory) ---------- */
+  .header-controls{
+    display:flex;
+    align-items:center;
+    gap:var(--space-2);
+    flex-wrap:wrap;
+  }
+  .tier-toggle{
+    display:flex;
+    border:1px solid var(--border);
+    border-radius:var(--radius-pill);
+    overflow:hidden;
+  }
+  .tier-toggle button{
+    border:1px solid transparent;
+    margin:-1px;
+    background:var(--surface);
+    color:var(--ink-soft);
+    font-weight:700;
+    font-size:.76rem;
+    padding:6px 12px;
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+  }
+  .tier-toggle button.active{
+    background:var(--segment-active-bg);
+    color:var(--segment-active-text);
+    border-color:var(--segment-active-border);
+  }
+  .memory-toggle{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:.78rem;
+    color:var(--ink-soft);
+    cursor:pointer;
+    user-select:none;
+  }
+  .memory-toggle input{cursor:pointer;accent-color:var(--accent);}
+
+  /* ---------- layout ---------- */
+  .layout{
+    flex:1;
+    display:flex;
+    gap:var(--space-2);
+    padding:var(--space-2);
+    min-height:0;
+  }
+  .chat-panel{
+    flex:0 0 38%;
+    max-width:60vw;
+    min-width:320px;
+    display:flex;
+    flex-direction:column;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    min-height:0;
+    overflow:hidden;
+  }
+  .dash-panel{
+    flex:1;
+    min-width:0;
+    display:flex;
+    flex-direction:column;
+    min-height:0;
+  }
+  /* ---------- M10 §5: splitter (chat <-> dashboard) ---------- */
+  .splitter{
+    flex:0 0 10px;
+    width:10px;
+    align-self:stretch;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:col-resize;
+    position:relative;
+    background:transparent;
+    border:none;
+    padding:0;
+    touch-action:none;
+  }
+  .splitter::before{
+    content:"";
+    position:absolute;
+    top:8px;
+    bottom:8px;
+    left:50%;
+    width:1px;
+    background:var(--border);
+    transform:translateX(-50%);
+    transition:background var(--dur-fast) var(--ease-out);
+  }
+  .splitter:hover::before,
+  .splitter.dragging::before{background:var(--accent);}
+  .splitter-grip{color:var(--ink-muted);pointer-events:none;transition:color var(--dur-fast) var(--ease-out);}
+  .splitter:hover .splitter-grip,
+  .splitter.dragging .splitter-grip{color:var(--accent);}
+
+  @media (max-width:900px){
+    .layout{flex-direction:column;}
+    .splitter{display:none;}
+    /* !important: overrides any inline width the splitter drag persisted
+       for the desktop layout — a stale px value must never survive onto
+       the mobile stacked layout and force horizontal overflow. */
+    .chat-panel{flex:0 0 auto !important;width:auto !important;max-width:100% !important;min-width:0 !important;max-height:52vh;}
+    /* M9: the mandatory footer disclaimer line (DESIGN.md §0) adds height
+       to the footer, which — combined with the 60vh chat-panel cap this
+       replaces — used to squeeze .dash-panel down until its own toolbar
+       (title + "Build top-12 KPI dashboard" button) overflowed underneath
+       the footer and became unclickable. A trimmed chat-panel cap plus a
+       toolbar-sized floor here keeps every control reachable; if the sum
+       still exceeds the viewport the page scrolls as a whole rather than
+       clipping anything. */
+    .dash-panel{min-height:220px;}
+  }
+
+  /* ---------- chat panel ---------- */
+  .chips{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:6px;
+    padding:var(--space-2);
+    border-bottom:1px solid var(--border);
+  }
+  .chip-wrap{
+    position:relative;
+    display:inline-flex;
+  }
+  .chip{
+    font-size:.78rem;
+    background:var(--accent-soft);
+    color:var(--accent);
+    border:1px solid transparent;
+    border-radius:var(--radius-sm);
+    padding:6px 22px 6px 12px;
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out);
+  }
+  .chip:hover{background:#D8EAE0;}
+  .chip-remove{
+    position:absolute;
+    top:2px;
+    right:3px;
+    width:15px;
+    height:15px;
+    line-height:14px;
+    text-align:center;
+    border:none;
+    border-radius:50%;
+    background:rgba(21,71,52,.18);
+    color:var(--accent);
+    font-size:.65rem;
+    font-weight:700;
+    cursor:pointer;
+    padding:0;
+    opacity:0;
+    transition:opacity .12s,background .12s;
+  }
+  .chip-wrap:hover .chip-remove{opacity:1;}
+  .chip-remove:hover{background:var(--danger);color:#fff;}
+  /* Touch devices have no hover state to reveal the × on — keep it always
+     visible there, just small, rather than requiring a long-press. */
+  @media (hover:none){
+    .chip-remove{opacity:.55;}
+  }
+  .chip-reset{
+    font-size:.72rem;
+    font-weight:600;
+    color:var(--ink-muted);
+    text-decoration:underline;
+    cursor:pointer;
+    background:none;
+    border:none;
+    padding:4px 2px;
+    user-select:none;
+  }
+  .chip-reset:hover{color:var(--accent);}
+
+  .messages{
+    flex:1;
+    overflow-y:auto;
+    padding:var(--space-2);
+    display:flex;
+    flex-direction:column;
+    gap:var(--space-2);
+    min-height:0;
+  }
+  .msg{max-width:92%;line-height:1.45;font-size:.92rem;}
+  .msg.user{
+    /* DESIGN.md §1b "Dark rules": user bubble uses the semantic
+       --bubble-user-* tokens, not --accent/#fff directly — light theme
+       resolves them to the same deep-green-fill/white-text look as before;
+       dark theme swaps to --accent-soft fill + --ink text (§1b). */
+    align-self:flex-end;
+    background:var(--bubble-user-bg);
+    color:var(--bubble-user-text);
+    padding:10px 14px;
+    border-radius:14px 14px 2px 14px;
+    display:flex;
+    align-items:flex-start;
+    gap:6px;
+  }
+  .msg.user .msg-user-text a{color:inherit;}
+  .msg.user .msg-user-text{flex:1;min-width:0;white-space:pre-wrap;word-break:break-word;}
+  .msg.user .pin-btn{
+    flex:0 0 auto;
+    border:none;
+    background:color-mix(in srgb, currentColor 18%, transparent);
+    color:inherit;
+    border-radius:50%;
+    width:22px;
+    height:22px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    padding:0;
+  }
+  .msg.user .pin-btn svg{width:12px;height:12px;}
+  .msg.user .pin-btn:hover{background:color-mix(in srgb, currentColor 32%, transparent);}
+  .msg.user .pin-btn.pinned{background:color-mix(in srgb, currentColor 50%, transparent);}
+  .msg.agent{
+    align-self:flex-start;
+    background:var(--surface);
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:10px 14px;
+    border-radius:14px 14px 14px 2px;
+  }
+  .msg.agent.error{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);}
+  .msg .sql-toggle{
+    display:inline-block;
+    margin-top:8px;
+    font-size:.74rem;
+    font-weight:700;
+    color:var(--accent);
+    cursor:pointer;
+    user-select:none;
+  }
+  .msg pre.sql{
+    display:none;
+    margin-top:6px;
+    background:var(--surface-ink);
+    color:#DCE7E0;
+    padding:10px;
+    border-radius:var(--radius-sm);
+    font-family:"SFMono-Regular",Consolas,Menlo,monospace;
+    font-size:.72rem;
+    overflow-x:auto;
+    white-space:pre;
+  }
+  .msg pre.sql.open{display:block;}
+  .msg .data-toggle{
+    display:inline-block;
+    margin-top:8px;
+    margin-left:10px;
+    font-size:.74rem;
+    font-weight:700;
+    color:var(--accent);
+    cursor:pointer;
+    user-select:none;
+  }
+  .data-table-wrap{
+    display:none;
+    margin-top:6px;
+    max-height:220px;
+    overflow:auto;
+    border:1px solid var(--border);
+    border-radius:var(--radius-sm);
+  }
+  .data-table-wrap.open{display:block;}
+  .data-table-wrap .fallback-table{font-size:11px;}
+  .data-table-wrap .fallback-table th{position:sticky;top:0;}
+  .data-table-note{
+    font-size:.68rem;
+    color:var(--text-muted);
+    font-style:italic;
+    padding:4px 8px;
+    border-top:1px solid var(--border);
+  }
+  /* ---------- M12: feedback row under every agent answer bubble ----------
+     Deliberately non-functional (user's request) — thumbs just toggle a
+     local selected state, "Feedback" opens nothing (title-only tooltip).
+     DESIGN.md §5 "Ghost/icon buttons": transparent, --ink-muted icon,
+     hover --accent-soft circle; micro size, matches .card-icon-btn. */
+  .feedback-row{
+    display:flex;
+    align-items:center;
+    gap:2px;
+    margin-top:8px;
+  }
+  .feedback-icon-btn{
+    border:none;
+    background:transparent;
+    color:var(--ink-muted);
+    border-radius:50%;
+    width:22px;
+    height:22px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    padding:0;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+  }
+  .feedback-icon-btn svg{width:14px;height:14px;}
+  .feedback-icon-btn:hover{background:var(--accent-soft);color:var(--accent);}
+  .feedback-icon-btn.selected{color:var(--accent);}
+  .feedback-text-btn{
+    display:inline-flex;
+    align-items:center;
+    border:none;
+    background:transparent;
+    color:var(--ink-muted);
+    font-size:.72rem;
+    font-weight:600;
+    border-radius:var(--radius-pill);
+    padding:3px 10px;
+    margin-left:4px;
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+  }
+  .feedback-text-btn svg{width:12px;height:12px;}
+  .feedback-text-btn:hover{background:var(--accent-soft);color:var(--accent);}
+  /* ---------- SQL syntax highlighting (M7b, highlight.js) ---------- */
+  /* DESIGN.md §5 "SQL blocks": --surface-ink bg; keywords #CFFB5E (lime —
+     a FILL/mark context, not text-on-white, so the §1 "never lime text"
+     rule doesn't apply here), strings #9CCDB0, numbers #E9C46A, comments
+     #7E8B83. Punctuation/built_in/operator/variable aren't enumerated in
+     the contract — kept inside the same dark-surface green family so the
+     block reads as one palette rather than reintroducing the old teal. */
+  pre.sql .hljs{background:none;color:inherit;}
+  pre.sql .hljs-keyword,
+  pre.sql .hljs-keyword.hljs-punctuation{color:#CFFB5E;font-weight:700;}
+  pre.sql .hljs-built_in,
+  pre.sql .hljs-type{color:#6FAE86;}
+  pre.sql .hljs-string{color:#9CCDB0;}
+  pre.sql .hljs-number,
+  pre.sql .hljs-literal{color:#E9C46A;}
+  pre.sql .hljs-comment{color:#7E8B83;font-style:italic;}
+  pre.sql .hljs-operator,
+  pre.sql .hljs-punctuation{color:#9FB3AC;}
+  pre.sql .hljs-variable,
+  pre.sql .hljs-title,
+  pre.sql .hljs-attr{color:#DCE7E0;}
+  /* M10: the pending-answer placeholder now reuses the header's own
+     sound-bars mark (mini scale, always animating) instead of a plain
+     ellipsis — DESIGN.md §5 "Thinking animation". */
+  .typing{
+    align-self:flex-start;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:.82rem;
+    color:var(--text-muted);
+    padding:6px 4px;
+  }
+  .mini-eq{display:inline-flex;flex:0 0 auto;}
+
+  /* ---------- live agent trace (M3a) ---------- */
+  .trace-bubble{
+    align-self:flex-start;
+    max-width:92%;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:14px 14px 14px 2px;
+    padding:10px 14px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .trace-step{
+    display:flex;
+    align-items:flex-start;
+    gap:8px;
+    font-size:.82rem;
+    color:var(--ink-muted);
+    animation:step-in .18s ease-out;
+  }
+  @keyframes step-in{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:translateY(0);}}
+  .trace-step .trace-icon{flex:0 0 auto;line-height:1.3;color:var(--ink-muted);}
+  .trace-step .trace-icon svg{width:16px;height:16px;margin-top:1px;}
+  .trace-step .trace-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .trace-step .trace-row{display:flex;align-items:baseline;gap:8px;}
+  .trace-step .trace-label{flex:1;min-width:0;color:var(--text);}
+  .trace-step.done .trace-label{color:var(--text-muted);}
+  .trace-step.trace-error .trace-label{color:var(--danger);}
+  .trace-step.trace-error .trace-icon{color:var(--danger);}
+  .trace-step .step-secs{margin-left:auto;flex:0 0 auto;}
+  .trace-step .retry-badge{
+    display:inline-block;
+    flex:0 0 auto;
+    font-size:.68rem;
+    font-weight:700;
+    color:var(--warn-ink);
+    background:var(--warn-bg);
+    border:1px solid var(--warn-border);
+    border-radius:var(--radius-pill);
+    padding:1px 8px;
+  }
+  .trace-step .retry-reason{
+    display:block;
+    font-size:.74rem;
+    color:var(--text-muted);
+    font-style:italic;
+  }
+  .trace-step .sql-toggle{
+    display:inline-block;
+    font-size:.72rem;
+    font-weight:700;
+    color:var(--accent);
+    cursor:pointer;
+    user-select:none;
+  }
+  .trace-step pre.sql{
+    display:none;
+    margin-top:2px;
+    background:var(--surface-ink);
+    color:#DCE7E0;
+    padding:8px 10px;
+    border-radius:var(--radius-sm);
+    font-family:"SFMono-Regular",Consolas,Menlo,monospace;
+    font-size:.7rem;
+    overflow-x:auto;
+    white-space:pre;
+    max-width:100%;
+  }
+  .trace-step pre.sql.open{display:block;}
+
+  /* M11 addendum 2: build_dashboard's trace step expands into a titled
+     list of per-KPI SQL blocks instead of a single pre.sql — same tokens,
+     same toggle pattern, just one more level of nesting. The 3-class
+     selector below outranks ".trace-step pre.sql{display:none}" above by
+     specificity alone, so each item's block still needs its own ".open"
+     class (none of these are pre-opened) but is not blanket-hidden by the
+     single-sql rule while the list container itself is open. */
+  .trace-step .trace-sql-list{
+    display:none;
+    margin-top:2px;
+    flex-direction:column;
+    gap:8px;
+  }
+  .trace-step .trace-sql-list.open{display:flex;}
+  .trace-step .trace-sql-item-title{
+    font-size:.72rem;
+    font-weight:700;
+    color:var(--text-muted);
+  }
+  .trace-step .trace-sql-list pre.sql{display:block;margin-top:2px;}
+
+  /* ---------- M10 §5: Claude-style collapsed trace summary ---------- */
+  .trace-summary{
+    align-self:flex-start;
+    /* flex-shrink:0 is load-bearing: this is a flex item of the column
+       .messages, and setting overflow:hidden (below) removes the browser's
+       normal "don't shrink past content" protection for flex items — without
+       an explicit flex-shrink:0 the whole card gets crushed to ~0 height
+       whenever .messages is tight on space. */
+    flex-shrink:0;
+    max-width:92%;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:14px 14px 14px 2px;
+    overflow:hidden;
+  }
+  .trace-summary-toggle{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    width:100%;
+    border:none;
+    background:none;
+    padding:10px 14px;
+    font-size:.82rem;
+    font-weight:700;
+    color:var(--ink-soft);
+    cursor:pointer;
+    text-align:left;
+    transition:background var(--dur-fast) var(--ease-out);
+  }
+  .trace-summary-toggle:hover{background:var(--accent-soft);}
+  .trace-summary-chevron{display:inline-flex;flex:0 0 auto;color:var(--ink-muted);}
+  .trace-summary-chevron svg{width:14px;height:14px;transition:transform var(--dur-drawer) var(--ease-out);}
+  .trace-summary-chevron.open svg{transform:rotate(90deg);}
+  .trace-summary-body-wrap{
+    display:grid;
+    grid-template-rows:0fr;
+    transition:grid-template-rows var(--dur-drawer) var(--ease-out);
+  }
+  .trace-summary-body-wrap.open{grid-template-rows:1fr;}
+  .trace-summary-body-inner{overflow:hidden;min-height:0;padding:0 14px;}
+  .trace-summary-body-wrap.open .trace-summary-body-inner{padding:0 14px 10px;}
+  .trace-summary-body-inner .trace-step{
+    padding:8px 0;
+    border-top:1px solid var(--border);
+    animation:none;
+  }
+  .trace-summary-body-inner .trace-step:first-child{border-top:none;padding-top:0;}
+
+  /* ---------- knowledge citations ---------- */
+  .citations{
+    display:flex;
+    flex-wrap:wrap;
+    gap:5px;
+    margin-top:8px;
+  }
+  .citation-chip{
+    font-size:.68rem;
+    font-weight:600;
+    color:var(--accent-mid);
+    background:var(--accent-soft);
+    border:1px solid var(--accent-mid);
+    border-radius:var(--radius-pill);
+    padding:2px 9px;
+  }
+
+  .composer{
+    display:flex;
+    gap:8px;
+    padding:var(--space-2);
+    border-top:1px solid var(--border);
+  }
+  .composer input{
+    flex:1;
+    border:1px solid var(--border-strong);
+    border-radius:var(--radius-md);
+    padding:10px 16px;
+    font-size:.9rem;
+    outline:none;
+    background:var(--surface);
+    color:var(--ink);
+    transition:border-color var(--dur-fast) var(--ease-out);
+  }
+  .composer input:focus{border-color:var(--accent);}
+  /* DESIGN.md §5 "Button primary": --action (lime) fill, ink text, 700,
+     radius 8, no shadow — hover --action-hover, active presses down 1px.
+     Text uses the fixed --action-ink (never var(--ink)) per §1b: the lime
+     fill itself never changes between themes, so its text must not either.
+     This is the chat panel's one primary action. */
+  .composer button{
+    border:none;
+    background:var(--action);
+    color:var(--action-ink);
+    border-radius:var(--radius-sm);
+    padding:10px 20px;
+    font-weight:700;
+    font-size:.85rem;
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out);
+  }
+  .composer button:hover:not(:disabled){background:var(--action-hover);}
+  .composer button:active:not(:disabled){transform:translateY(1px);}
+  .composer button:disabled{opacity:.5;cursor:default;}
+
+  /* ---------- dashboard panel ---------- */
+  .dash-toolbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:var(--space-2);
+    margin-bottom:var(--space-2);
+    flex-wrap:wrap;
+  }
+  .dash-toolbar h2{font-size:1rem;margin:0;color:var(--ink-soft);font-weight:600;font-family:var(--font-display);}
+  .dash-toolbar-title{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  /* Same [hidden]-vs-author-`display` cascade note as .catalog-backdrop/
+     .catalog-panel above — spelled out explicitly so toggling `hidden`
+     actually hides this. */
+  .dash-filter-chip[hidden]{display:none;}
+  /* M11: the active natural-language dashboard filter, e.g. "Last 3
+     months · DE" — DESIGN.md's chip language (--accent-soft fill,
+     --accent text) with an inline clear-×, next to the panel title. */
+  .dash-filter-chip{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-size:.78rem;
+    font-weight:600;
+    background:var(--accent-soft);
+    color:var(--accent);
+    border-radius:var(--radius-sm);
+    padding:4px 6px 4px 10px;
+  }
+  .dash-filter-chip-clear{
+    width:16px;
+    height:16px;
+    line-height:14px;
+    text-align:center;
+    border:none;
+    border-radius:50%;
+    background:rgba(21,71,52,.18);
+    color:var(--accent);
+    font-size:.72rem;
+    font-weight:700;
+    cursor:pointer;
+    padding:0;
+  }
+  .dash-filter-chip-clear:hover{background:var(--danger);color:#fff;}
+  /* DESIGN.md §5 "Button primary": lime fill, ink text, no shadow — the
+     dashboard panel's one primary action (distinct region from the
+     composer's Ask button, so still "one lime element per region"). */
+  .build-btn{
+    border:none;
+    background:var(--action);
+    color:var(--action-ink);
+    font-weight:700;
+    font-size:.88rem;
+    padding:12px 22px;
+    border-radius:var(--radius-sm);
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out);
+  }
+  .build-btn:hover:not(:disabled){background:var(--action-hover);}
+  .build-btn:active:not(:disabled){transform:translateY(1px);}
+  .build-btn:disabled{opacity:.6;cursor:default;}
+
+  .grid{
+    flex:1;
+    overflow-y:auto;
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+    gap:var(--space-2);
+    align-content:start;
+    padding-bottom:var(--space-2);
+  }
+  .empty-state{
+    grid-column:1/-1;
+    text-align:center;
+    color:var(--text-muted);
+    padding:var(--space-4);
+    border:1px dashed var(--border);
+    border-radius:var(--radius);
+    font-size:.9rem;
+  }
+  /* DESIGN.md §5 "Cards (dashboard)": --surface, border, radius 16, title
+     in Fraunces, controls as ghost icons top-right. */
+  .card{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:var(--space-2);
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    position:relative;
+    transition:opacity var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out);
+  }
+  .card[draggable="true"]{cursor:grab;}
+  .card.dragging{opacity:.4;}
+  .card.drop-before{box-shadow:inset 0 3px 0 0 var(--accent);}
+  .card.drop-after{box-shadow:inset 0 -3px 0 0 var(--accent);}
+  .card-header{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:8px;
+  }
+  .card h3{margin:0;font-size:15px;font-weight:600;font-family:var(--font-display);color:var(--ink);flex:1;min-width:0;}
+  .card-actions{
+    display:flex;
+    align-items:center;
+    gap:4px;
+    flex:0 0 auto;
+  }
+  /* DESIGN.md §5 "Ghost/icon buttons": transparent, --ink-muted icon,
+     hover --accent-soft circle. */
+  .card-icon-btn{
+    border:none;
+    background:transparent;
+    color:var(--ink-muted);
+    border-radius:50%;
+    width:22px;
+    height:22px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    padding:0;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+  }
+  .card-icon-btn svg{width:14px;height:14px;}
+  .card-icon-btn:hover{background:var(--accent-soft);color:var(--accent);}
+  .card-close-btn{
+    border:none;
+    background:transparent;
+    color:var(--ink-muted);
+    width:22px;
+    height:22px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    border-radius:50%;
+    cursor:pointer;
+    padding:0;
+    opacity:.7;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out),opacity var(--dur-fast) var(--ease-out);
+  }
+  .card-close-btn svg{width:14px;height:14px;}
+  .card-close-btn:hover{opacity:1;color:var(--danger);background:var(--accent-soft);}
+  /* DESIGN.md §5 "Button secondary": --surface fill, 1px --border-strong,
+     --ink text; hover --accent-soft. */
+  .card-ask-btn{
+    align-self:flex-start;
+    border:1px solid var(--border-strong);
+    background:var(--surface);
+    color:var(--ink);
+    font-size:.72rem;
+    font-weight:600;
+    border-radius:var(--radius-sm);
+    padding:4px 10px;
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out);
+  }
+  .card-ask-btn:hover{background:var(--accent-soft);}
+  .card .chart-box{width:100%;height:220px;}
+  .card .answer{font-size:.82rem;color:var(--text);line-height:1.4;}
+  .card .consent{font-size:.7rem;color:var(--text-muted);font-style:italic;border-top:1px dashed var(--border);padding-top:6px;}
+  /* DESIGN.md §5 "Stat tile": Fraunces 34px value in --ink, label --ink-muted. */
+  .stat-tile{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    height:220px;
+    background:var(--accent-soft);
+    border-radius:var(--radius-sm);
+  }
+  .stat-tile .value{font-family:var(--font-display);font-size:34px;font-weight:600;color:var(--ink);}
+  .stat-tile .label{font-size:.78rem;color:var(--ink-muted);margin-top:4px;}
+
+  /* ---------- M8: answer-latency badges ---------- */
+  .msg-meta{
+    display:flex;
+    justify-content:flex-end;
+    margin-bottom:2px;
+  }
+  .latency-badge{
+    font-size:.68rem;
+    color:var(--ink-muted);
+    font-variant-numeric:tabular-nums;
+  }
+  .card-latency-badge{
+    font-size:.68rem;
+    color:var(--ink-muted);
+    font-variant-numeric:tabular-nums;
+    align-self:center;
+    margin-right:2px;
+    white-space:nowrap;
+  }
+
+  /* ---------- M8: CSV download icon buttons ---------- */
+  .csv-btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    margin-left:8px;
+    width:22px;
+    height:22px;
+    border:none;
+    background:none;
+    color:var(--accent);
+    cursor:pointer;
+    padding:0;
+    vertical-align:middle;
+    border-radius:50%;
+    transition:background var(--dur-fast) var(--ease-out);
+  }
+  .csv-btn svg{width:14px;height:14px;}
+  .csv-btn:hover{background:var(--accent-soft);opacity:1;}
+
+  /* ---------- M8: dashboard "Reset layout" link ---------- */
+  .reset-layout-link{
+    font-size:.74rem;
+    font-weight:600;
+    color:var(--ink-muted);
+    text-decoration:underline;
+    cursor:pointer;
+    background:none;
+    border:none;
+    padding:2px;
+    user-select:none;
+  }
+  .reset-layout-link:hover{color:var(--accent);}
+
+  /* ---------- M8: data catalog drawer ---------- */
+  /* DESIGN.md §5 "Button secondary" look for the drawer toggle. */
+  .catalog-toggle-btn{
+    display:inline-flex;
+    align-items:center;
+    border:1px solid var(--border-strong);
+    background:var(--surface);
+    color:var(--ink);
+    font-weight:700;
+    font-size:.78rem;
+    padding:6px 12px;
+    border-radius:var(--radius-sm);
+    cursor:pointer;
+    white-space:nowrap;
+    transition:background var(--dur-fast) var(--ease-out);
+  }
+  .catalog-toggle-btn svg{width:15px;height:15px;}
+  .catalog-toggle-btn:hover{background:var(--accent-soft);}
+  /* Author `display` below would otherwise out-cascade the UA [hidden]
+     rule (same specificity, author origin wins) — spell it out explicitly
+     so toggling the `hidden` IDL property actually hides these. */
+  .catalog-backdrop[hidden],
+  .catalog-panel[hidden]{display:none;}
+  .catalog-backdrop{
+    position:fixed;
+    inset:0;
+    background:rgba(32,31,28,.35);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity var(--dur-fast) var(--ease-out);
+    z-index:39;
+  }
+  .catalog-backdrop.open{opacity:1;pointer-events:auto;}
+  /* DESIGN.md §5 "Catalog drawer": --surface, soft shadow (the one
+     floating-layer elevation token). */
+  .catalog-panel{
+    position:fixed;
+    top:0;
+    left:0;
+    bottom:0;
+    width:290px;
+    max-width:82vw;
+    background:var(--surface);
+    border-right:1px solid var(--border);
+    box-shadow:var(--shadow-float);
+    transform:translateX(-100%);
+    transition:transform var(--dur-drawer) var(--ease-out);
+    z-index:40;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  .catalog-panel.open{transform:translateX(0);}
+  .catalog-panel-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    padding:var(--space-2);
+    border-bottom:1px solid var(--border);
+  }
+  .catalog-panel-header h3{margin:0;font-size:.95rem;font-family:var(--font-display);font-weight:600;color:var(--ink);}
+  .catalog-panel-close{
+    border:none;
+    background:none;
+    color:var(--ink-muted);
+    cursor:pointer;
+    width:26px;
+    height:26px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    padding:0;
+    border-radius:50%;
+    transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+  }
+  .catalog-panel-close svg{width:16px;height:16px;}
+  .catalog-panel-close:hover{color:var(--danger);background:var(--accent-soft);}
+  .catalog-panel-body{flex:1;overflow-y:auto;padding:var(--space-2);}
+  .catalog-group{margin-bottom:var(--space-3);}
+  /* DESIGN.md §5 "Catalog drawer": layer headers as small tinted pill
+     chips (bronze/silver/gold), each table its own boxed card. */
+  .catalog-layer-chip{
+    display:inline-block;
+    margin-bottom:8px;
+    font-size:.66rem;
+    font-weight:700;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+    border-radius:var(--radius-pill);
+    padding:3px 10px;
+  }
+  .catalog-layer-bronze{background:var(--catalog-bronze-bg);color:var(--catalog-bronze-ink);}
+  .catalog-layer-silver{background:var(--surface-alt);color:var(--ink-muted);border:1px solid var(--border);}
+  .catalog-layer-gold{background:var(--accent-soft);color:var(--accent);}
+  .catalog-items{display:flex;flex-direction:column;gap:6px;}
+  .catalog-item{
+    display:block;
+    width:100%;
+    text-align:left;
+    background:var(--surface-alt);
+    border:1px solid var(--border);
+    border-radius:var(--radius-sm);
+    padding:8px 10px;
+    cursor:pointer;
+    transition:background var(--dur-fast) var(--ease-out);
+  }
+  .catalog-item:hover{background:var(--accent-soft);}
+  .catalog-item-name{
+    display:block;
+    color:var(--ink);
+    font-size:.78rem;
+    font-family:"SFMono-Regular",Consolas,Menlo,monospace;
+  }
+  .catalog-item-comment{
+    display:block;
+    margin-top:4px;
+    color:var(--ink-muted);
+    font-size:.72rem;
+    font-family:var(--font-ui);
+  }
+  .catalog-empty{font-size:.8rem;color:var(--text-muted);padding:4px 6px;}
+
+  /* ---------- M8: chat empty-state welcome ---------- */
+  .welcome-block{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    gap:8px;
+    padding:var(--space-4) var(--space-2);
+    margin:auto 0;
+  }
+  /* DESIGN.md §3 display role: welcome title in Fraunces 600, 28px. */
+  .welcome-title{font-family:var(--font-display);font-size:28px;font-weight:600;color:var(--ink);line-height:1.2;}
+  .welcome-subtitle{font-size:.84rem;color:var(--text-muted);max-width:34ch;}
+  .welcome-suggestions{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:10px;
+    width:100%;
+    margin-top:var(--space-2);
+  }
+  /* DESIGN.md §5 "Welcome suggestion cards: --surface + border, Fraunces
+     title line." */
+  .welcome-card{
+    border:1px solid var(--border);
+    background:var(--surface);
+    color:var(--ink);
+    font-family:var(--font-display);
+    font-size:.9rem;
+    font-weight:600;
+    border-radius:var(--radius-sm);
+    padding:12px 14px;
+    cursor:pointer;
+    text-align:left;
+    line-height:1.35;
+    transition:background var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out);
+  }
+  .welcome-card:hover{background:var(--accent-soft);border-color:var(--accent-mid);}
+
+  /* ---------- toast ---------- */
+  #toast{
+    position:fixed;
+    bottom:20px;
+    left:50%;
+    transform:translateX(-50%);
+    background:var(--danger);
+    color:#fff;
+    padding:10px 18px;
+    border-radius:var(--radius-sm);
+    font-size:.85rem;
+    box-shadow:var(--shadow-float);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .2s;
+    z-index:50;
+  }
+  #toast.show{opacity:1;}
+
+  footer{
+    padding:8px var(--space-3);
+    font-size:.72rem;
+    color:var(--text-muted);
+    background:var(--panel);
+    border-top:1px solid var(--border);
+    text-align:center;
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+  }
+.footer-disclaimer{display:block;color:var(--ink-muted);}
+/* ---------- M13: demo gate lock screen ----------
+   DESIGN.md-consistent: --surface card floating on --surface-alt, the
+   sound-bars brand mark, one input + one lime "Button primary", --danger
+   inline error text, disclaimer footer text reused verbatim. No new hues. */
+.demo-lock-overlay[hidden]{display:none;}
+.demo-lock-overlay{
+  position:fixed;
+  inset:0;
+  z-index:1000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--surface-alt);
+  padding:var(--space-2);
+}
+.demo-lock-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-float);
+  padding:36px 30px 26px;
+  width:100%;
+  max-width:360px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
+  gap:8px;
+}
+.demo-lock-card .eq-mark{margin-bottom:6px;}
+.demo-lock-card h2{
+  font-family:var(--font-display);
+  font-size:1.35rem;
+  color:var(--ink);
+  margin:0;
+}
+.demo-lock-sub{
+  font-size:.85rem;
+  color:var(--ink-muted);
+  margin:0 0 10px;
+}
+.demo-lock-form{
+  display:flex;
+  gap:8px;
+  width:100%;
+}
+.demo-lock-form input{
+  flex:1;
+  min-width:0;
+  border:1px solid var(--border-strong);
+  border-radius:var(--radius-md);
+  padding:10px 14px;
+  font-size:.9rem;
+  outline:none;
+  background:var(--surface);
+  color:var(--ink);
+  transition:border-color var(--dur-fast) var(--ease-out);
+}
+/* DESIGN.md §5 "Button primary": --action fill, --action-ink text, 700,
+   radius 8, hover --action-hover, active presses down 1px. */
+.demo-lock-form button{
+  border:none;
+  background:var(--action);
+  color:var(--action-ink);
+  border-radius:var(--radius-sm);
+  padding:10px 18px;
+  font-weight:700;
+  font-size:.85rem;
+  cursor:pointer;
+  transition:background var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out);
+}
+.demo-lock-form button:hover:not(:disabled){background:var(--action-hover);}
+.demo-lock-form button:active:not(:disabled){transform:translateY(1px);}
+.demo-lock-form button:disabled{opacity:.5;cursor:default;}
+.demo-lock-error{
+  font-size:.8rem;
+  font-weight:600;
+  color:var(--danger);
+  min-height:1em;
+}
+.demo-lock-error[hidden]{display:none;}
+.demo-lock-card .demo-lock-disclaimer{font-size:.68rem;margin-top:10px;}
+/* DESIGN.md §5 "Tables": header --surface-alt, hairline borders, row
+   hover --accent-soft at 40%. */
+.fallback-table{width:100%;border-collapse:collapse;font-size:12px}
+.fallback-table th,.fallback-table td{border:1px solid var(--border);padding:4px 8px;text-align:left;white-space:nowrap}
+.fallback-table th{background:var(--surface-alt);font-weight:600}
+.fallback-table tbody tr:hover td{background:rgba(231,240,234,.4)}
+.card .card-notes{margin-top:8px;border-top:1px dashed var(--border);padding-top:6px}
+.card .card-notes summary{font-size:.74rem;font-weight:700;color:var(--accent);cursor:pointer;user-select:none;list-style:none}
+.card .card-notes summary::before{content:"\25B8 ";font-size:.7rem}
+.card .card-notes[open] summary::before{content:"\25BE "}
+.step-secs{margin-left:6px;font-size:.68rem;color:var(--text-muted);font-variant-numeric:tabular-nums}
+
+/* ---------- rendered markdown (answers) ---------- */
+.md-content p{margin:0 0 6px;}
+.md-content p:last-child{margin-bottom:0;}
+.md-content ul,.md-content ol{margin:2px 0 6px;padding-left:1.25em;}
+.md-content li{margin:2px 0;}
+.md-content li:last-child{margin-bottom:0;}
+.md-content h1,.md-content h2,.md-content h3{
+  font-size:.95rem;
+  font-weight:700;
+  line-height:1.3;
+  margin:6px 0 4px;
+  color:inherit;
+}
+.md-content h1:first-child,.md-content h2:first-child,.md-content h3:first-child{margin-top:0;}
+.md-content strong{font-weight:700;}
+.md-content code{
+  font-family:"SFMono-Regular",Consolas,Menlo,monospace;
+  font-size:.85em;
+  background:rgba(32,31,28,.06);
+  padding:1px 4px;
+  border-radius:4px;
+}
+.md-content pre{
+  background:var(--surface-ink);
+  color:#DCE7E0;
+  padding:8px 10px;
+  border-radius:var(--radius-sm);
+  overflow-x:auto;
+  font-size:.78rem;
+  margin:6px 0;
+}
+.md-content pre code{background:none;padding:0;color:inherit;}
+.md-content blockquote{
+  margin:4px 0;
+  padding-left:8px;
+  border-left:3px solid var(--border);
+  color:var(--text-muted);
+}
+.md-content a{color:var(--accent);}
+.md-content > *:first-child{margin-top:0;}
+.md-content > *:last-child{margin-bottom:0;}
+.md-table-wrap{overflow-x:auto;margin:6px 0;}
+.md-table-wrap:last-child{margin-bottom:0;}
+.md-table{width:100%;border-collapse:collapse;font-size:12px;}
+.md-table th,.md-table td{border:1px solid var(--border);padding:4px 8px;text-align:left;white-space:nowrap}
+.md-table th{background:var(--surface-alt);font-weight:600}
+.md-table tbody tr:hover td{background:rgba(231,240,234,.4)}
+
+/* Note: the persistent collapsed-trace <details> element that used to live
+   here was replaced by the Claude-style .trace-summary button/panel above
+   (M10 §5) — see collapseTrace() in the script below. */
+</style>
+</head>
+<body>
+
+<!-- M13: demo gate lock screen — hidden unless GET /health reports
+     "locked": true (see app.main._demo_gate_middleware); shown as a
+     full-page overlay on top of the (already-rendered) app chrome so
+     nothing behind it is reachable until the passphrase is accepted. -->
+<div class="demo-lock-overlay" id="demo-lock-overlay" hidden>
+  <div class="demo-lock-card">
+    <span class="brand-mark eq-mark" id="demo-lock-mark" aria-hidden="true"></span>
+    <h2 data-i18n="demoLockTitle">Private demo</h2>
+    <p class="demo-lock-sub" data-i18n="demoLockSubtitle">Enter the passphrase to continue.</p>
+    <form id="demo-lock-form" class="demo-lock-form" autocomplete="off">
+      <input type="password" id="demo-lock-input" data-i18n-placeholder="demoLockPlaceholder"
+        placeholder="Passphrase" autocomplete="off" />
+      <button type="submit" id="demo-lock-submit" data-i18n="demoLockEnter">Enter</button>
+    </form>
+    <div class="demo-lock-error" id="demo-lock-error" role="alert" hidden></div>
+    <span class="footer-disclaimer demo-lock-disclaimer" data-i18n="footerDisclaimer">Independent case-study demo · synthetic data · not affiliated with Sonova or Phonak.</span>
+  </div>
+</div>
+
+<header>
+  <div class="brand">
+    <!-- M10 §5: our own inline-SVG sound-bars mark — filled in by JS
+         (eqBarsSvg) so the header and the chat "thinking" placeholder
+         share exactly one markup source. Never Phonak's or any third
+         party's icon asset. -->
+    <span class="brand-mark eq-mark" id="brand-mark" aria-hidden="true"></span>
+    <h1 class="brand-text">
+      <span class="brand-name" data-i18n="brandName">Phonak Funnel Copilot</span>
+      <span class="brand-demo" data-i18n="brandDemo">Demo</span>
+    </h1>
+    <span class="badge" data-i18n="badge">Synthetic data · Privacy-by-design demo</span>
+  </div>
+  <div class="header-controls">
+    <div class="conn-indicator" id="conn-indicator" aria-live="polite">
+      <span class="conn-dot" id="conn-dot"></span>
+      <span class="conn-label" id="conn-label"></span>
+    </div>
+    <div class="tier-toggle" role="group" aria-label="model tier">
+      <button type="button" id="tier-fast" data-tier="fast" data-i18n="tierFast">Fast</button>
+      <button type="button" id="tier-balanced" data-tier="balanced" data-i18n="tierBalanced">Balanced</button>
+      <button type="button" id="tier-max" data-tier="max" class="active" data-i18n="tierMax">Max</button>
+    </div>
+    <label class="memory-toggle">
+      <input type="checkbox" id="memory-toggle" checked />
+      <span data-i18n="memoryLabel">Partial memory</span>
+    </label>
+    <button type="button" id="catalog-toggle-btn" class="catalog-toggle-btn">
+      <span class="btn-icon" data-icon="book"></span><span data-i18n="catalogToggle">Catalog</span>
+    </button>
+    <button type="button" id="theme-toggle-btn" class="ghost-icon-btn theme-toggle-btn" aria-label="Switch to dark theme">
+      <span class="theme-icon-sun" data-icon="sun"></span>
+      <span class="theme-icon-moon" data-icon="moon"></span>
+    </button>
+    <div class="lang-toggle" role="group" aria-label="language">
+      <button id="btn-en" class="active">EN</button>
+      <button id="btn-tr">TR</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <section class="chat-panel">
+    <div class="chips" id="chips"></div>
+    <div class="messages" id="messages"></div>
+    <div class="composer">
+      <input id="question-input" type="text" data-i18n-placeholder="placeholder" placeholder="Ask about the funnel…" />
+      <button id="send-btn" data-i18n="send">Ask</button>
+    </div>
+  </section>
+
+  <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize panels">
+    <span class="splitter-grip" data-icon="grip"></span>
+  </div>
+
+  <section class="dash-panel">
+    <div class="dash-toolbar">
+      <div class="dash-toolbar-title">
+        <h2 data-i18n="dashTitle">Live dashboard</h2>
+        <button type="button" class="reset-layout-link" id="reset-layout-btn" data-i18n="resetLayoutLink">Reset layout</button>
+        <!-- M11: shown only while a natural-language filtered dashboard is
+             active (see renderDashFilterChip()); clearing it re-fetches
+             the unfiltered legacy top-12 dashboard. -->
+        <span class="dash-filter-chip" id="dash-filter-chip" hidden>
+          <span id="dash-filter-chip-text"></span>
+          <button type="button" class="dash-filter-chip-clear" id="dash-filter-chip-clear" data-i18n-aria-label="dashFilterClearTitle" data-i18n-title="dashFilterClearTitle" aria-label="Clear filter">×</button>
+        </span>
+      </div>
+      <button class="build-btn" id="build-dashboard-btn" data-i18n="buildBtn">Build top-12 KPI dashboard</button>
+    </div>
+    <div class="grid" id="grid">
+      <div class="empty-state" data-i18n="emptyState">Ask a question or build the KPI dashboard to see charts here.</div>
+    </div>
+  </section>
+</div>
+
+<footer id="footer">
+  <span id="footer-status" data-i18n="footerLoading">Connecting…</span>
+  <span class="footer-disclaimer" data-i18n="footerDisclaimer">Independent case-study demo · synthetic data · not affiliated with Sonova or Phonak.</span>
+</footer>
+<div id="toast"></div>
+
+<!-- M8: data catalog drawer (medallion bronze/silver/gold tree) -->
+<div class="catalog-backdrop" id="catalog-backdrop" hidden></div>
+<aside class="catalog-panel" id="catalog-panel" hidden aria-hidden="true">
+  <div class="catalog-panel-header">
+    <h3 data-i18n="catalogTitle">Data catalog</h3>
+    <button type="button" class="catalog-panel-close" id="catalog-close-btn" data-i18n-aria-label="catalogClose" aria-label="Close">
+      <span data-icon="close"></span>
+    </button>
+  </div>
+  <div class="catalog-panel-body" id="catalog-panel-body"></div>
+</aside>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------------------------------------------------------- i18n
+  var LANG = "en";
+  var I18N = {
+    en: {
+      brandName: "Phonak Funnel Copilot",
+      brandDemo: "Demo",
+      badge: "Synthetic data · Privacy-by-design demo",
+      placeholder: "Ask about the funnel…",
+      send: "Ask",
+      dashTitle: "Live dashboard",
+      buildBtn: "Build top-12 KPI dashboard",
+      emptyState: "Ask a question or build the KPI dashboard to see charts here.",
+      footerLoading: "Connecting…",
+      footerTemplate: "Driver: {driver} · LLM: {llm} · Data through {ts}",
+      footerDisclaimer: "Independent case-study demo · synthetic data · not affiliated with Sonova or Phonak.",
+      showSql: "Show SQL",
+      hideSql: "Hide SQL",
+      thinking: "Copilot is thinking…",
+      buildingDash: "Building the top-12 KPI dashboard…",
+      errorGeneric: "Something went wrong reaching the Copilot. Please try again.",
+      errorRateLimit: "Too many requests — please wait a moment and try again.",
+      you: "You",
+      copilot: "Copilot",
+      traceLabelPlan: "Planning",
+      traceLabelSchema: "Reading schema",
+      traceLabelSearching: "Searching knowledge",
+      traceLabelSql: "Running SQL",
+      traceLabelRetry: "Fixing query",
+      traceLabelAnswer: "Writing answer",
+      traceLabelMetric: "Fetching metric",
+      cardNotesToggle: "Details",
+      traceRetryBadge: "retry {n}",
+      traceViewLabel: "View trace ({n} steps)",
+      traceLabelContext: "Using context from previous question",
+      showData: "Show data",
+      hideData: "Hide data",
+      dataCapNote: "Showing first 50 rows of {n}.",
+      pinQuestionTitle: "Pin this question as a chip",
+      chipPinnedToast: "Added as a chip.",
+      removeChipTitle: "Remove chip",
+      resetChipsLink: "Reset chips",
+      tierFast: "Fast",
+      tierBalanced: "Balanced",
+      tierMax: "Max",
+      memoryLabel: "Partial memory",
+      footerTierSuffix: " · Tier: {tier}",
+      cardCloseTitle: "Remove card",
+      cardChartTypeTitle: "Switch chart type",
+      cardAskAbout: "Ask about this chart",
+      askAboutPrefix: "About the ‘{title}’ chart: ",
+      // ---- M8 additions ----
+      latencyTitle: "Answer time",
+      downloadCsv: "Download as CSV",
+      csvDefaultFilename: "funnel-data",
+      resetLayoutLink: "Reset layout",
+      catalogToggle: "Catalog",
+      catalogTitle: "Data catalog",
+      catalogClose: "Close",
+      catalogLoading: "Loading catalog…",
+      catalogLoadError: "Couldn't load the catalog.",
+      catalogLayerBronze: "Bronze",
+      catalogLayerSilver: "Silver",
+      catalogLayerGold: "Gold",
+      catalogEmptyLayer: "No objects in this layer.",
+      // ---- M10 additions ----
+      connDatabricks: "Databricks",
+      connDuckdb: "DuckDB local",
+      connOffline: "Offline",
+      connTitleTemplate: "Driver: {driver} · LLM: {llm} · Tier: {tier}",
+      themeToggleToLight: "Switch to light theme",
+      themeToggleToDark: "Switch to dark theme",
+      traceSummary: "{n} steps · {s}s",
+      welcomeTitle: "What do you want to learn?",
+      welcomeSubtitle: "Ask anything about the synthetic Phonak hearing-aid funnel data — from drop-off points to channel attribution.",
+      chips: [
+        "Where is the biggest drop-off?",
+        "Compare pairing rate iOS vs Android by market",
+        "Which channel wins on actual pairings, not downloads?",
+        "Which channel has the best D30 retention?",
+        "First-touch vs last-touch: different stories?",
+        "Completion rate: channel × device",
+        "KPI dashboard for the last 3 months"
+      ],
+      // ---- M11 additions ----
+      traceLabelDashboard: "Building dashboard",
+      dashFilterClearTitle: "Clear filter",
+      dashFilterAll: "All data",
+      // ---- M12 additions ----
+      feedbackGoodTitle: "Good answer",
+      feedbackBadTitle: "Bad answer",
+      feedbackButton: "Feedback",
+      feedbackNotWiredTitle: "Demo — not wired",
+      // ---- M13 additions ----
+      demoLockTitle: "Private demo",
+      demoLockSubtitle: "Enter the passphrase to continue.",
+      demoLockPlaceholder: "Passphrase",
+      demoLockEnter: "Enter",
+      demoLockWrong: "Incorrect passphrase.",
+      demoLockRetry: "Too many attempts — please wait a moment and try again."
+    },
+    tr: {
+      brandName: "Phonak Funnel Copilot",
+      brandDemo: "Demo",
+      badge: "Sentetik veri · Tasarımdan gizlilik demosu",
+      placeholder: "Funnel hakkında bir şey sorun…",
+      send: "Sor",
+      dashTitle: "Canlı kokpit",
+      buildBtn: "Top-12 KPI kokpiti kur",
+      emptyState: "Grafikleri görmek için bir soru sorun ya da KPI kokpitini kurun.",
+      footerLoading: "Bağlanıyor…",
+      footerTemplate: "Sürücü: {driver} · LLM: {llm} · Veri son tarih {ts}",
+      footerDisclaimer: "Bağımsız vaka çalışması demosu · sentetik veri · Sonova veya Phonak ile bağlantılı değildir.",
+      showSql: "SQL'i göster",
+      hideSql: "SQL'i gizle",
+      thinking: "Copilot düşünüyor…",
+      buildingDash: "Top-12 KPI kokpiti kuruluyor…",
+      errorGeneric: "Copilot'a ulaşırken bir sorun oluştu. Lütfen tekrar deneyin.",
+      errorRateLimit: "Çok fazla istek gönderildi — lütfen biraz bekleyip tekrar deneyin.",
+      you: "Siz",
+      copilot: "Copilot",
+      traceLabelPlan: "Planlanıyor",
+      traceLabelSchema: "Şema okunuyor",
+      traceLabelSearching: "Bilgi tabanında aranıyor",
+      traceLabelSql: "SQL çalıştırılıyor",
+      traceLabelRetry: "Sorgu düzeltiliyor",
+      traceLabelAnswer: "Cevap yazılıyor",
+      traceLabelMetric: "KPI getiriliyor",
+      cardNotesToggle: "Detaylar",
+      traceRetryBadge: "deneme {n}",
+      traceViewLabel: "Ajan izini gör ({n} adım)",
+      traceLabelContext: "Önceki sorunun bağlamı kullanılıyor",
+      showData: "Veriyi göster",
+      hideData: "Veriyi gizle",
+      dataCapNote: "{n} satırdan ilk 50 tanesi gösteriliyor.",
+      pinQuestionTitle: "Bu soruyu sohbet balonu olarak sabitle",
+      chipPinnedToast: "Sohbet balonu olarak eklendi.",
+      removeChipTitle: "Balonu kaldır",
+      resetChipsLink: "Balonları sıfırla",
+      tierFast: "Hızlı",
+      tierBalanced: "Dengeli",
+      tierMax: "Maks",
+      memoryLabel: "Kısmi hafıza",
+      footerTierSuffix: " · Seviye: {tier}",
+      cardCloseTitle: "Kartı kaldır",
+      cardChartTypeTitle: "Grafik türünü değiştir",
+      cardAskAbout: "Bu grafik hakkında sor",
+      askAboutPrefix: "'{title}' grafiği hakkında: ",
+      // ---- M8 eklemeleri ----
+      latencyTitle: "Yanıt süresi",
+      downloadCsv: "CSV olarak indir",
+      csvDefaultFilename: "funnel-verisi",
+      resetLayoutLink: "Yerleşimi sıfırla",
+      catalogToggle: "Katalog",
+      catalogTitle: "Veri kataloğu",
+      catalogClose: "Kapat",
+      catalogLoading: "Katalog yükleniyor…",
+      catalogLoadError: "Katalog yüklenemedi.",
+      catalogLayerBronze: "Bronz",
+      catalogLayerSilver: "Gümüş",
+      catalogLayerGold: "Altın",
+      catalogEmptyLayer: "Bu katmanda nesne yok.",
+      // ---- M10 eklemeleri ----
+      connDatabricks: "Databricks",
+      connDuckdb: "Yerel DuckDB",
+      connOffline: "Çevrimdışı",
+      connTitleTemplate: "Sürücü: {driver} · LLM: {llm} · Seviye: {tier}",
+      themeToggleToLight: "Açık temaya geç",
+      themeToggleToDark: "Koyu temaya geç",
+      traceSummary: "{n} adım · {s}sn",
+      welcomeTitle: "Ne öğrenmek istiyorsun?",
+      welcomeSubtitle: "Sentetik Phonak işitme cihazı funnel verisi hakkında her şeyi sorabilirsin — düşüş noktalarından kanal atfına kadar.",
+      chips: [
+        "En büyük düşüş nerede?",
+        "Pazara göre iOS ve Android eşleştirme oranını karşılaştır",
+        "Hangi kanal indirmede değil, gerçek eşleştirmede önde?",
+        "Hangi kanalın D30 tutundurması en iyi?",
+        "İlk temas mı son temas mı: farklı hikayeler mi anlatıyor?",
+        "Tamamlama oranı: kanal × cihaz",
+        "Son 3 ay için KPI kokpiti"
+      ],
+      // ---- M11 eklemeleri ----
+      traceLabelDashboard: "Kokpit kuruluyor",
+      dashFilterClearTitle: "Filtreyi temizle",
+      dashFilterAll: "Tüm veri",
+      // ---- M12 eklemeleri ----
+      feedbackGoodTitle: "İyi cevap",
+      feedbackBadTitle: "Kötü cevap",
+      feedbackButton: "Geri bildir",
+      feedbackNotWiredTitle: "Demo — bağlı değil",
+      // ---- M13 eklemeleri ----
+      demoLockTitle: "Özel demo",
+      demoLockSubtitle: "Devam etmek için parolayı girin.",
+      demoLockPlaceholder: "Parola",
+      demoLockEnter: "Gir",
+      demoLockWrong: "Parola hatalı.",
+      demoLockRetry: "Çok fazla deneme yapıldı — lütfen biraz bekleyip tekrar deneyin."
+    }
+  };
+  function t(key){ return I18N[LANG][key]; }
+
+  // ---------------------------------------------------------------- M10: icon set
+  // DESIGN.md §5 "Icon set": one consistent inline-SVG set (24x24 viewBox,
+  // stroke currentColor 1.6, round caps/joins, no fills), defined once and
+  // reused everywhere UI chrome used to show an emoji. `pin` is the one
+  // glyph added beyond the DESIGN.md list — the "pin this question as a
+  // chip" feature needs a functional (not decorative) glyph and none of
+  // the listed icons fit, so it is drawn in the exact same stroke style.
+  var ICONS = {
+    "plan-list": '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/>',
+    "database": '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.75"/><path d="M4.5 5.5v6c0 1.52 3.36 2.75 7.5 2.75s7.5-1.23 7.5-2.75v-6"/><path d="M4.5 11.5v6c0 1.52 3.36 2.75 7.5 2.75s7.5-1.23 7.5-2.75v-6"/>',
+    "chart": '<line x1="3" y1="19" x2="21" y2="19"/><line x1="6" y1="19" x2="6" y2="10"/><line x1="12" y1="19" x2="12" y2="5"/><line x1="18" y1="19" x2="18" y2="13"/>',
+    "brain": '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><line x1="12" y1="5" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="19"/><line x1="5" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="19" y2="12"/>',
+    "book": '<path d="M4 5.2c0-.7.6-1.2 1.3-1.1 2 .3 4.7 1 6.7 2.4 2-1.4 4.7-2.1 6.7-2.4.7-.1 1.3.4 1.3 1.1v13.4c0 .7-.6 1.2-1.3 1.1-2-.3-4.7-1-6.7-2.4-2 1.4-4.7 2.1-6.7 2.4-.7.1-1.3-.4-1.3-1.1z"/><line x1="12" y1="6.5" x2="12" y2="19.5"/>',
+    "download": '<path d="M12 3v12"/><polyline points="7,10 12,15 17,10"/><line x1="4" y1="20" x2="20" y2="20"/>',
+    "table": '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="3.5" y1="14.5" x2="20.5" y2="14.5"/><line x1="9.5" y1="4.5" x2="9.5" y2="19.5"/>',
+    "close": '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
+    "chevron-right": '<polyline points="9,5 16,12 9,19"/>',
+    "chevron-down": '<polyline points="5,9 12,16 19,9"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.6" y1="4.6" x2="6.7" y2="6.7"/><line x1="17.3" y1="17.3" x2="19.4" y2="19.4"/><line x1="4.6" y1="19.4" x2="6.7" y2="17.3"/><line x1="17.3" y1="6.7" x2="19.4" y2="4.6"/>',
+    "moon": '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+    "grip": '<circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>',
+    "check": '<polyline points="4,12 9,17 20,6"/>',
+    "alert": '<path d="M12 3.2 2.4 20.5h19.2z"/><line x1="12" y1="9.5" x2="12" y2="14.2"/><line x1="12" y1="17" x2="12" y2="17.1"/>',
+    "pin": '<path d="M12 2.5c-3 0-5.5 2.34-5.5 5.5 0 4 5.5 13.5 5.5 13.5s5.5-9.5 5.5-13.5c0-3.16-2.5-5.5-5.5-5.5z"/><circle cx="12" cy="8" r="2.2"/>',
+    // M12: feedback row glyphs — same drawn-from-scratch stroke set as
+    // every other icon here (24x24, no fills), added for the (deliberately
+    // non-functional) thumbs-up/down + "Feedback" affordance under an
+    // answer bubble.
+    "thumb-up": '<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>',
+    "thumb-down": '<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>',
+    "comment": '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 8.5-8.5h.5a8.48 8.48 0 0 1 8 8v.5z"/>'
+  };
+  function iconSvg(name, size){
+    size = size || 16;
+    var inner = ICONS[name] || "";
+    return '<svg class="icon" width="' + size + '" height="' + size +
+      '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
+  }
+  // Fills every static `[data-icon]` placeholder in the header/drawer markup
+  // — called once at startup. Icons created dynamically by JS (card
+  // controls, trace steps, pin button, ...) call iconSvg() directly instead.
+  function applyStaticIcons(){
+    Array.prototype.forEach.call(document.querySelectorAll("[data-icon]"), function(el){
+      var size = parseInt(el.getAttribute("data-icon-size"), 10) || 16;
+      el.innerHTML = iconSvg(el.getAttribute("data-icon"), size);
+    });
+  }
+
+  // ---------------------------------------------------------------- M10: sound-bars brand mark
+  // DESIGN.md §5 "Brand lockup"/"Thinking animation": the SAME 5-bar mark
+  // is used, at two sizes, in both places — one source of markup, reused.
+  function eqBarsSvg(size){
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<rect class="eq-bar" x="1.5" y="12" width="3" height="8" rx="1.5"/>' +
+      '<rect class="eq-bar" x="6" y="7" width="3" height="13" rx="1.5"/>' +
+      '<rect class="eq-bar eq-bar-center" x="10.5" y="3" width="3" height="17" rx="1.5"/>' +
+      '<rect class="eq-bar" x="15" y="7" width="3" height="13" rx="1.5"/>' +
+      '<rect class="eq-bar" x="19.5" y="12" width="3" height="8" rx="1.5"/>' +
+      '</svg>';
+  }
+
+  // ---------------------------------------------------------------- state
+  var els = {
+    chips: document.getElementById("chips"),
+    messages: document.getElementById("messages"),
+    input: document.getElementById("question-input"),
+    sendBtn: document.getElementById("send-btn"),
+    buildBtn: document.getElementById("build-dashboard-btn"),
+    grid: document.getElementById("grid"),
+    footer: document.getElementById("footer-status"),
+    toast: document.getElementById("toast"),
+    btnEn: document.getElementById("btn-en"),
+    btnTr: document.getElementById("btn-tr"),
+    tierFast: document.getElementById("tier-fast"),
+    tierBalanced: document.getElementById("tier-balanced"),
+    tierMax: document.getElementById("tier-max"),
+    memoryToggle: document.getElementById("memory-toggle"),
+    resetLayoutBtn: document.getElementById("reset-layout-btn"),
+    catalogToggleBtn: document.getElementById("catalog-toggle-btn"),
+    catalogBackdrop: document.getElementById("catalog-backdrop"),
+    catalogPanel: document.getElementById("catalog-panel"),
+    catalogCloseBtn: document.getElementById("catalog-close-btn"),
+    catalogBody: document.getElementById("catalog-panel-body"),
+    brandMark: document.getElementById("brand-mark"),
+    themeToggleBtn: document.getElementById("theme-toggle-btn"),
+    connIndicator: document.getElementById("conn-indicator"),
+    connDot: document.getElementById("conn-dot"),
+    connLabel: document.getElementById("conn-label"),
+    dashFilterChip: document.getElementById("dash-filter-chip"),
+    dashFilterChipText: document.getElementById("dash-filter-chip-text"),
+    dashFilterChipClear: document.getElementById("dash-filter-chip-clear"),
+    demoLockOverlay: document.getElementById("demo-lock-overlay"),
+    demoLockForm: document.getElementById("demo-lock-form"),
+    demoLockInput: document.getElementById("demo-lock-input"),
+    demoLockSubmit: document.getElementById("demo-lock-submit"),
+    demoLockError: document.getElementById("demo-lock-error"),
+    demoLockMark: document.getElementById("demo-lock-mark")
+  };
+  applyStaticIcons();
+  if (els.brandMark) els.brandMark.innerHTML = eqBarsSvg(22);
+  if (els.demoLockMark) els.demoLockMark.innerHTML = eqBarsSvg(28);
+
+  // Toggles the header brand-mark's equalizer animation — on for the
+  // duration of one ask/build request (submit -> answer/error), per
+  // DESIGN.md §5 "Thinking animation".
+  function setThinking(on){
+    if (els.brandMark) els.brandMark.classList.toggle("thinking", !!on);
+  }
+
+  // ---------------------------------------------------------------- M10: light/dark theme
+  // DESIGN.md §1b: default follows prefers-color-scheme (pure CSS, no JS
+  // needed for that case); an explicit user choice is persisted and wins.
+  var THEME_STORAGE_KEY = "fcTheme";
+  function loadExplicitTheme(){
+    try {
+      var raw = window.localStorage.getItem(THEME_STORAGE_KEY);
+      if (raw === "light" || raw === "dark") return raw;
+    } catch (e) { /* localStorage unavailable/denied — follow system */ }
+    return null;
+  }
+  function saveExplicitTheme(v){
+    try {
+      if (v === null) window.localStorage.removeItem(THEME_STORAGE_KEY);
+      else window.localStorage.setItem(THEME_STORAGE_KEY, v);
+    } catch (e) { /* ignore quota/denied */ }
+  }
+  var explicitTheme = loadExplicitTheme();
+  function systemPrefersDark(){
+    try { return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches); }
+    catch (e) { return false; }
+  }
+  function effectiveTheme(){
+    return explicitTheme || (systemPrefersDark() ? "dark" : "light");
+  }
+  function updateThemeToggleUi(){
+    if (!els.themeToggleBtn) return;
+    var isDark = effectiveTheme() === "dark";
+    els.themeToggleBtn.classList.toggle("is-dark", isDark);
+    var label = isDark ? t("themeToggleToLight") : t("themeToggleToDark");
+    els.themeToggleBtn.setAttribute("aria-label", label);
+    els.themeToggleBtn.title = label;
+  }
+  function applyTheme(){
+    // §6 "theme switch: none (instant token swap)" — suspend transitions
+    // for one frame so the many hover/focus transitions elsewhere don't
+    // animate the color swap itself.
+    document.documentElement.classList.add("theme-swap");
+    if (explicitTheme) document.documentElement.setAttribute("data-theme", explicitTheme);
+    else document.documentElement.removeAttribute("data-theme");
+    updateThemeToggleUi();
+    retintCharts();
+    requestAnimationFrame(function(){
+      document.documentElement.classList.remove("theme-swap");
+    });
+  }
+  function toggleTheme(){
+    explicitTheme = effectiveTheme() === "dark" ? "light" : "dark";
+    saveExplicitTheme(explicitTheme);
+    applyTheme();
+  }
+
+  // ---------------------------------------------------------------- M10: connection indicator
+  // DESIGN.md §5 "Connection indicator": polls GET /health every 30s (10s
+  // while offline), pulses the dot only when the state actually changes.
+  var connState = null; // "databricks" | "duckdb" | "offline"
+  var connPollTimer = null;
+  function updateConnIndicator(state, info){
+    if (!els.connDot || !els.connLabel) return;
+    var changed = state !== connState;
+    connState = state;
+    els.connDot.className = "conn-dot " + state;
+    var label = state === "databricks" ? t("connDatabricks")
+      : state === "duckdb" ? t("connDuckdb")
+      : t("connOffline");
+    els.connLabel.textContent = label;
+    if (els.connIndicator){
+      els.connIndicator.title = t("connTitleTemplate")
+        .replace("{driver}", (info && info.driver) || "?")
+        .replace("{llm}", (info && info.llm) || "?")
+        .replace("{tier}", currentTier);
+    }
+    if (changed){
+      els.connDot.classList.remove("pulse");
+      void els.connDot.offsetWidth; // force reflow so the animation restarts
+      els.connDot.classList.add("pulse");
+    }
+  }
+  function scheduleHealthPoll(delayMs){
+    if (connPollTimer) clearTimeout(connPollTimer);
+    connPollTimer = setTimeout(pollHealth, delayMs);
+  }
+  function pollHealth(){
+    apiGet("/health").then(function(info){
+      healthInfo = info;
+      renderFooter();
+      updateConnIndicator(info.driver === "databricks" ? "databricks" : "duckdb", info);
+      scheduleHealthPoll(30000);
+    }).catch(function(){
+      healthInfo = {driver: "?", llm: "?", data_max_ts: "?"};
+      renderFooter();
+      updateConnIndicator("offline", null);
+      scheduleHealthPoll(10000);
+    });
+  }
+  var healthInfo = { driver: "…", llm: "…", data_max_ts: "…" };
+  var chartInstances = [];
+  var cardSeq = 0;
+  // M8: once true, the chat has moved past its empty-state welcome block
+  // for good (a fresh page load starts false; nothing ever resets it back).
+  var firstQuestionSent = false;
+
+  // ---------------------------------------------------------------- M7b: session/tier/memory
+  // One id per page load — a module variable, deliberately never persisted
+  // to localStorage (a fresh tab/reload starts a fresh conversation on the
+  // server's ConversationMemory side too).
+  function makeSessionId(){
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === "function"){
+        return window.crypto.randomUUID();
+      }
+    } catch (e) { /* fall through to the manual fallback below */ }
+    // Fallback for older browsers without crypto.randomUUID: good enough
+    // to key an in-memory server-side session, not meant to be secure.
+    return "sess-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+  }
+  var SESSION_ID = makeSessionId();
+
+  var TIER_STORAGE_KEY = "funnelCopilotTier_v1";
+  var TIERS = ["fast", "balanced", "max"];
+  function loadTier(){
+    try {
+      var raw = window.localStorage.getItem(TIER_STORAGE_KEY);
+      if (raw && TIERS.indexOf(raw) !== -1) return raw;
+    } catch (e) { /* localStorage unavailable/denied — fall back to default */ }
+    return "max";
+  }
+  function saveTier(tier){
+    try { window.localStorage.setItem(TIER_STORAGE_KEY, tier); } catch (e) { /* ignore */ }
+  }
+  var currentTier = loadTier();
+
+  function setTier(tier){
+    if (TIERS.indexOf(tier) === -1) return;
+    currentTier = tier;
+    saveTier(tier);
+    [els.tierFast, els.tierBalanced, els.tierMax].forEach(function(btn){
+      if (btn) btn.classList.toggle("active", btn.getAttribute("data-tier") === tier);
+    });
+    renderFooter();
+  }
+
+  function memoryEnabled(){
+    return !!(els.memoryToggle && els.memoryToggle.checked);
+  }
+
+  // ---------------------------------------------------------------- M7b: chip persistence
+  // Chip set = each language's built-in defaults, minus anything the user
+  // deleted, plus anything the user pinned — stored per-language since the
+  // default chip text itself differs by language. Every read/write is
+  // wrapped in try/catch (this page can run from a plain file:// origin in
+  // some setups, and private-browsing modes can throw on access) and any
+  // corrupt/unexpected shape silently falls back to "no customizations".
+  var CHIP_STORAGE_KEY = "funnelCopilotChips_v1";
+
+  function emptyChipState(){
+    return { en: { removed: [], pinned: [] }, tr: { removed: [], pinned: [] } };
+  }
+
+  function loadChipState(){
+    var state = emptyChipState();
+    try {
+      var raw = window.localStorage.getItem(CHIP_STORAGE_KEY);
+      if (!raw) return state;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return emptyChipState();
+      ["en", "tr"].forEach(function(lang){
+        var entry = parsed[lang];
+        state[lang] = {
+          removed: Array.isArray(entry && entry.removed) ? entry.removed.filter(function(x){ return typeof x === "string"; }) : [],
+          pinned: Array.isArray(entry && entry.pinned) ? entry.pinned.filter(function(x){ return typeof x === "string"; }) : []
+        };
+      });
+    } catch (e) {
+      return emptyChipState();
+    }
+    return state;
+  }
+
+  function saveChipState(){
+    try { window.localStorage.setItem(CHIP_STORAGE_KEY, JSON.stringify(chipState)); } catch (e) { /* ignore quota/denied */ }
+  }
+
+  var chipState = loadChipState();
+
+  function defaultChipsForLang(lang){
+    return I18N[lang].chips;
+  }
+
+  function currentChipList(lang){
+    var st = chipState[lang] || { removed: [], pinned: [] };
+    var defaults = defaultChipsForLang(lang).filter(function(q){ return st.removed.indexOf(q) === -1; });
+    var pinned = (st.pinned || []).filter(function(q){ return defaults.indexOf(q) === -1; });
+    return defaults.concat(pinned);
+  }
+
+  function removeChip(lang, text){
+    var st = chipState[lang] || { removed: [], pinned: [] };
+    if (defaultChipsForLang(lang).indexOf(text) !== -1 && st.removed.indexOf(text) === -1){
+      st.removed.push(text);
+    }
+    st.pinned = st.pinned.filter(function(q){ return q !== text; });
+    chipState[lang] = st;
+    saveChipState();
+    renderChips();
+  }
+
+  function pinChip(text){
+    text = (text || "").trim();
+    if (!text) return;
+    var lang = LANG;
+    var st = chipState[lang] || { removed: [], pinned: [] };
+    st.removed = st.removed.filter(function(q){ return q !== text; });
+    if (defaultChipsForLang(lang).indexOf(text) === -1 && st.pinned.indexOf(text) === -1){
+      st.pinned.push(text);
+    }
+    chipState[lang] = st;
+    saveChipState();
+    renderChips();
+    showToast(t("chipPinnedToast"));
+  }
+
+  function resetChips(){
+    chipState[LANG] = { removed: [], pinned: [] };
+    saveChipState();
+    renderChips();
+  }
+
+  function renderChips(){
+    els.chips.innerHTML = "";
+    currentChipList(LANG).forEach(function(q){
+      var wrap = document.createElement("span");
+      wrap.className = "chip-wrap";
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.textContent = q;
+      chip.addEventListener("click", function(){ sendQuestion(q); });
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "chip-remove";
+      rm.textContent = "×";
+      rm.title = t("removeChipTitle");
+      rm.setAttribute("aria-label", t("removeChipTitle"));
+      rm.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        removeChip(LANG, q);
+      });
+      wrap.appendChild(chip);
+      wrap.appendChild(rm);
+      els.chips.appendChild(wrap);
+    });
+    var reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "chip-reset";
+    reset.textContent = t("resetChipsLink");
+    reset.addEventListener("click", resetChips);
+    els.chips.appendChild(reset);
+  }
+
+  // ---------------------------------------------------------------- M8: dashboard layout persistence
+  // Persists the top-12 dashboard's grid state — card order (by metric
+  // key), which cards are closed, and the chosen chart type per card —
+  // across reloads. Single-question chart cards never touch this: they
+  // carry no `key` (see makeCard()/prependCard()), so they can never be
+  // added to `order`/`closed`/`chartType` below. Every access wrapped in
+  // try/catch per the app's localStorage convention; corrupt/unexpected
+  // shapes fall back to defaults exactly like the chip-state loader above.
+  var BOARD_STORAGE_KEY = "funnelCopilotBoard_v1";
+
+  function defaultBoardState(){
+    return { order: [], closed: [], chartType: {} };
+  }
+
+  function loadBoardState(){
+    try {
+      var raw = window.localStorage.getItem(BOARD_STORAGE_KEY);
+      if (!raw) return defaultBoardState();
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return defaultBoardState();
+      var order = Array.isArray(parsed.order)
+        ? parsed.order.filter(function(x){ return typeof x === "string"; })
+        : [];
+      var closed = Array.isArray(parsed.closed)
+        ? parsed.closed.filter(function(x){ return typeof x === "string"; })
+        : [];
+      var chartType = {};
+      if (parsed.chartType && typeof parsed.chartType === "object"){
+        Object.keys(parsed.chartType).forEach(function(k){
+          if (typeof parsed.chartType[k] === "string") chartType[k] = parsed.chartType[k];
+        });
+      }
+      return { order: order, closed: closed, chartType: chartType };
+    } catch (e) {
+      return defaultBoardState();
+    }
+  }
+
+  function saveBoardState(){
+    try { window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(boardState)); } catch (e) { /* ignore quota/denied */ }
+  }
+
+  var boardState = loadBoardState();
+
+  function markCardClosed(key){
+    if (!key) return;
+    if (boardState.closed.indexOf(key) === -1) boardState.closed.push(key);
+    saveBoardState();
+  }
+
+  // Re-reads the grid's actual DOM order (only cards carrying a persisted
+  // `data-card-key`, i.e. never an ephemeral single-question card) and
+  // saves it as the new order — called after every drag-and-drop reorder.
+  function syncBoardOrderFromDom(){
+    var keys = Array.prototype.map.call(
+      els.grid.querySelectorAll(".card[data-card-key]"),
+      function(c){ return c.dataset.cardKey; }
+    ).filter(function(k){ return k; });
+    boardState.order = keys;
+    saveBoardState();
+  }
+
+  // Reorders/filters a fresh /api/dashboard response per the persisted
+  // board state: stored order first (skipping anything closed or no
+  // longer present), then any remaining not-yet-seen card (a newly added
+  // metric, or simply the very first build) appended in its original
+  // (registry) order — also skipping closed ones.
+  function applyBoardLayout(cards){
+    var byKey = {};
+    cards.forEach(function(c){ if (c.key) byKey[c.key] = c; });
+    var closedSet = {};
+    boardState.closed.forEach(function(k){ closedSet[k] = true; });
+    var ordered = [];
+    boardState.order.forEach(function(k){
+      if (byKey[k] && !closedSet[k]){
+        ordered.push(byKey[k]);
+        delete byKey[k];
+      }
+    });
+    cards.forEach(function(c){
+      if (c.key && byKey[c.key] && !closedSet[c.key]){
+        ordered.push(c);
+        delete byKey[c.key];
+      }
+    });
+    return ordered;
+  }
+
+  // Returns `chart` with its `type` overridden to the persisted choice for
+  // `key`, when one is stored AND still a valid option for this chart
+  // (guards against corrupt/stale data — e.g. a stored "pie" for a chart
+  // that is now grouped/multi-series and no longer offers pie).
+  function withPersistedChartType(key, chart){
+    if (!chart || !key) return chart;
+    var stored = boardState.chartType[key];
+    if (!stored || stored === chart.type) return chart;
+    if (chartTypeCycle(chart).indexOf(stored) === -1) return chart;
+    return Object.assign({}, chart, { type: stored });
+  }
+
+  function resetBoardLayout(){
+    boardState = defaultBoardState();
+    saveBoardState();
+    if (lastDashboardCards){
+      // No new /api/dashboard fetch happens on a plain layout reset, so
+      // there is no fresh latency to report — redraw without a requestStart
+      // rather than showing a stale, minutes-old elapsed time.
+      renderDashboardGrid(lastDashboardCards, null);
+    }
+  }
+
+  // ---------------------------------------------------------------- utils
+  function fmtValue(v){
+    if (v === null || v === undefined) return "–";
+    if (typeof v === "number"){
+      if (v >= 0 && v <= 1 && !Number.isInteger(v)) return (v * 100).toFixed(1) + "%";
+      return v.toLocaleString(undefined, {maximumFractionDigits: 2});
+    }
+    return String(v);
+  }
+
+  // M8: locale-aware thousands separators for the stat-tile big number,
+  // per the active UI language (LANG) rather than the browser's own
+  // locale — "tr" gets Turkish grouping/decimal marks even in an
+  // English-locale browser, and vice versa.
+  function fmtStatValue(v){
+    if (v === null || v === undefined) return "–";
+    if (typeof v === "number"){
+      var locale = LANG === "tr" ? "tr-TR" : "en-US";
+      try {
+        if (v >= 0 && v <= 1 && !Number.isInteger(v)){
+          return (v * 100).toLocaleString(locale, {maximumFractionDigits: 1}) + "%";
+        }
+        return v.toLocaleString(locale, {maximumFractionDigits: 2});
+      } catch (e) {
+        return fmtValue(v);
+      }
+    }
+    return String(v);
+  }
+
+  // M8: detects the "single stat" result shape — one row with either a
+  // single numeric column, or exactly two columns where one is numeric
+  // and the other a label — worth a big-number tile instead of a
+  // (degenerate, one-point) chart.
+  function isStatShape(rows){
+    if (!rows || rows.length !== 1) return false;
+    var cols = Object.keys(rows[0]);
+    if (cols.length === 1) return typeof rows[0][cols[0]] === "number";
+    if (cols.length === 2){
+      var numCols = cols.filter(function(c){ return typeof rows[0][c] === "number"; });
+      var otherCols = cols.filter(function(c){ return typeof rows[0][c] !== "number"; });
+      return numCols.length === 1 && otherCols.length === 1;
+    }
+    return false;
+  }
+
+  function statShapeFields(rows){
+    var cols = Object.keys(rows[0]);
+    if (cols.length === 1) return {valueKey: cols[0], labelKey: null};
+    var numKey = cols.filter(function(c){ return typeof rows[0][c] === "number"; })[0];
+    var labelKey = cols.filter(function(c){ return c !== numKey; })[0];
+    return {valueKey: numKey, labelKey: labelKey};
+  }
+
+  // M8: filename-safe slug for a CSV download, derived from a card title
+  // or question — lowercased, non-alphanumerics collapsed to single
+  // hyphens, trimmed to a sane length. Never empty (falls back below).
+  function slugify(text){
+    var s = String(text == null ? "" : text)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60);
+    return s || null;
+  }
+
+  // M8: minimal CSV serialization (comma-separated, CRLF rows, RFC4180-style
+  // quoting of any field containing a comma/quote/newline).
+  function rowsToCsv(rows){
+    if (!rows || !rows.length) return "";
+    var cols = Object.keys(rows[0]);
+    function esc(v){
+      if (v === null || v === undefined) return "";
+      var s = String(v);
+      if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }
+    var lines = [cols.map(esc).join(",")];
+    rows.forEach(function(r){
+      lines.push(cols.map(function(c){ return esc(r[c]); }).join(","));
+    });
+    return lines.join("\r\n");
+  }
+
+  // M8: client-side Blob download of `rows` as CSV, named after
+  // `filenameHint` (card title / question). A UTF-8 BOM is prepended so
+  // Excel — which otherwise guesses a local 8-bit codepage — renders
+  // Turkish characters correctly. This is a plain download of the page's
+  // own already-rendered data (no new same-origin request), so a direct
+  // client-side Blob/<a download> is appropriate here.
+  function downloadCsv(rows, filenameHint){
+    if (!rows || !rows.length) return;
+    try {
+      var csv = rowsToCsv(rows);
+      var blob = new Blob(["\uFEFF" + csv], {type: "text/csv;charset=utf-8;"});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = (slugify(filenameHint) || t("csvDefaultFilename")) + ".csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    } catch (e) {
+      showToast(t("errorGeneric"));
+    }
+  }
+
+  // M8: inserts `text` into `input` at the current caret position (or
+  // appends when the input has no tracked selection), used by the data
+  // catalog panel's click-to-insert table names.
+  function insertAtCursor(input, text){
+    try {
+      var start = input.selectionStart;
+      var end = input.selectionEnd;
+      if (typeof start !== "number" || typeof end !== "number"){
+        input.value += text;
+        input.focus();
+        return;
+      }
+      var before = input.value.slice(0, start);
+      var after = input.value.slice(end);
+      input.value = before + text + after;
+      var pos = start + text.length;
+      input.focus();
+      input.setSelectionRange(pos, pos);
+    } catch (e) {
+      input.value = (input.value || "") + text;
+      try { input.focus(); } catch (e2) { /* ignore */ }
+    }
+  }
+
+  function showToast(message){
+    els.toast.textContent = message;
+    els.toast.classList.add("show");
+    setTimeout(function(){ els.toast.classList.remove("show"); }, 3500);
+  }
+
+  function escapeHtml(str){
+    var div = document.createElement("div");
+    div.textContent = str == null ? "" : String(str);
+    return div.innerHTML;
+  }
+
+  // Entity-encode only the characters that could open an HTML tag, BEFORE
+  // handing the raw LLM/user text to marked — this guarantees every tag in
+  // marked's output is one marked itself generated from markdown syntax,
+  // never one smuggled in through the source text.
+  function encodeHtmlEntities(str){
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  // Wrap every <table> marked produces in a scrollable container and tag it
+  // .md-table, reusing the existing .fallback-table visual language.
+  function wrapMarkdownTables(html){
+    var container = document.createElement("div");
+    container.innerHTML = html;
+    var tables = container.querySelectorAll("table");
+    for (var i = 0; i < tables.length; i++){
+      var tbl = tables[i];
+      tbl.classList.add("md-table");
+      var wrap = document.createElement("div");
+      wrap.className = "md-table-wrap";
+      tbl.parentNode.insertBefore(wrap, tbl);
+      wrap.appendChild(tbl);
+    }
+    return container.innerHTML;
+  }
+
+  // Renders `text` (assumed to be markdown from the LLM) to safe HTML.
+  // Falls back to the previous plain-text (fully escaped) rendering when
+  // the vendored marked library failed to load.
+  function renderMarkdown(text){
+    var raw = text == null ? "" : String(text);
+    if (window.marked && typeof window.marked.parse === "function"){
+      try {
+        var html = window.marked.parse(encodeHtmlEntities(raw), {
+          gfm: true,
+          breaks: true
+        });
+        return wrapMarkdownTables(html);
+      } catch (e) {
+        // fall through to plain-text rendering below
+      }
+    }
+    return escapeHtml(raw);
+  }
+
+  // Renders `sql` as syntax-highlighted HTML via the vendored highlight.js
+  // (see app/static/vendor/highlight.min.js), matching the dark pre.sql
+  // theme in <style>. Falls back to the pre-M7b plain escaped rendering
+  // whenever hljs failed to load or throws on this input.
+  function highlightSql(sql){
+    var raw = sql == null ? "" : String(sql);
+    if (window.hljs && typeof window.hljs.highlight === "function"){
+      try {
+        return '<code class="hljs language-sql">' +
+          window.hljs.highlight(raw, {language: "sql"}).value +
+          "</code>";
+      } catch (e) {
+        // fall through to plain-text rendering below
+      }
+    }
+    return escapeHtml(raw);
+  }
+
+  // Builds a compact, scrollable <table class="fallback-table"> for `rows`,
+  // capped at `cap` rows with a trailing note when rows were cut off.
+  // Shared by the chat "Show data" panel (M7b) and the dashboard's
+  // chart-load-failure fallback table.
+  function buildRowsTableHtml(rows, cap){
+    if (!rows || !rows.length) return "";
+    var cols = Object.keys(rows[0]);
+    var shown = cap ? rows.slice(0, cap) : rows;
+    var html = "<table class=\"fallback-table\"><thead><tr>" +
+      cols.map(function(c){ return "<th>" + escapeHtml(c) + "</th>"; }).join("") +
+      "</tr></thead><tbody>" +
+      shown.map(function(r){
+        return "<tr>" + cols.map(function(c){
+          return "<td>" + escapeHtml(fmtValue(r[c])) + "</td>";
+        }).join("") + "</tr>";
+      }).join("") +
+      "</tbody></table>";
+    if (cap && rows.length > cap){
+      html += '<div class="data-table-note">' + escapeHtml(t("dataCapNote").replace("{n}", rows.length)) + "</div>";
+    }
+    return html;
+  }
+
+  // ---------------------------------------------------------------- M13: demo gate
+  // Lightweight, server-enforced passphrase gate for the public deployment
+  // (see app.main._demo_gate_middleware) — entirely inert unless the
+  // operator sets DEMO_PASSPHRASE, which is exactly when GET /health
+  // starts reporting "locked": true. This code's only job is to collect
+  // the phrase once, hold it in sessionStorage for the tab's lifetime, and
+  // attach it as X-Demo-Key on every request; the server does every real
+  // check (normalization, timing-safe compare, brute-force damping) — the
+  // frontend never normalizes or validates the phrase itself.
+  var DEMO_KEY_STORAGE_KEY = "funnelCopilotDemoKey_v1";
+  var demoKey = null;
+  try { demoKey = window.sessionStorage.getItem(DEMO_KEY_STORAGE_KEY) || null; }
+  catch (e) { demoKey = null; }
+
+  function demoGateHeaders(base){
+    var headers = base || {};
+    if (demoKey) headers["X-Demo-Key"] = demoKey;
+    return headers;
+  }
+
+  function showDemoLock(){
+    if (els.demoLockOverlay) els.demoLockOverlay.hidden = false;
+    if (els.demoLockInput) els.demoLockInput.focus();
+  }
+  function hideDemoLock(){
+    if (els.demoLockOverlay) els.demoLockOverlay.hidden = true;
+  }
+  function setDemoLockError(text){
+    if (!els.demoLockError) return;
+    els.demoLockError.textContent = text || "";
+    els.demoLockError.hidden = !text;
+  }
+
+  // Called once on load (see checkDemoGate() below at bootstrap time): a
+  // key already sitting in sessionStorage from earlier in this tab still
+  // needs validating against the server (it could be stale — e.g. the
+  // operator rotated the passphrase) before the lock screen is skipped.
+  function validateStoredDemoKey(){
+    fetch("/api/metrics", {headers: demoGateHeaders({})}).then(function(resp){
+      if (resp.ok){ hideDemoLock(); return; }
+      demoKey = null;
+      try { window.sessionStorage.removeItem(DEMO_KEY_STORAGE_KEY); } catch (e) { /* ignore */ }
+      showDemoLock();
+    }).catch(function(){ showDemoLock(); });
+  }
+
+  function checkDemoGate(){
+    apiGet("/health").then(function(info){
+      if (!info.locked){ hideDemoLock(); return; }
+      if (demoKey){ validateStoredDemoKey(); } else { showDemoLock(); }
+    }).catch(function(){ /* /health unreachable — the offline connection
+      indicator elsewhere already surfaces this; nothing more to do here. */ });
+  }
+
+  if (els.demoLockForm){
+    els.demoLockForm.addEventListener("submit", function(e){
+      e.preventDefault();
+      var candidate = (els.demoLockInput && els.demoLockInput.value) || "";
+      if (!candidate.trim()) return;
+      setDemoLockError(null);
+      if (els.demoLockSubmit) els.demoLockSubmit.disabled = true;
+      fetch("/api/metrics", {headers: {"X-Demo-Key": candidate}}).then(function(resp){
+        if (resp.status === 429){
+          return resp.json().catch(function(){ return {}; }).then(function(json){
+            setDemoLockError(json.message || t("demoLockRetry"));
+          });
+        }
+        if (!resp.ok){
+          setDemoLockError(t("demoLockWrong"));
+          if (els.demoLockInput){ els.demoLockInput.value = ""; els.demoLockInput.focus(); }
+          return;
+        }
+        demoKey = candidate;
+        try { window.sessionStorage.setItem(DEMO_KEY_STORAGE_KEY, candidate); } catch (e) { /* ignore */ }
+        hideDemoLock();
+      }).catch(function(){
+        setDemoLockError(t("errorGeneric"));
+      }).finally(function(){
+        if (els.demoLockSubmit) els.demoLockSubmit.disabled = false;
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------- API
+  function apiPost(path, body){
+    return fetch(path, {
+      method: "POST",
+      headers: demoGateHeaders({"Content-Type": "application/json"}),
+      body: JSON.stringify(body || {})
+    }).then(function(resp){
+      return resp.json().then(function(json){
+        if (!resp.ok){
+          var err = new Error(json.error || "Request failed");
+          err.status = resp.status;
+          err.payload = json;
+          throw err;
+        }
+        return json;
+      });
+    });
+  }
+
+  function apiGet(path){
+    return fetch(path, {headers: demoGateHeaders({})}).then(function(resp){
+      return resp.json().then(function(json){
+        if (!resp.ok){
+          var err = new Error(json.error || "Request failed");
+          err.status = resp.status;
+          throw err;
+        }
+        return json;
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------- chat UI
+  // Returns the created bubble so the caller (sendQuestion) can attach a
+  // "pin as chip" button to it once the agent's answer has arrived (M7b).
+  function addUserMessage(text){
+    // M8: the empty-state welcome block (if still showing) lives inside
+    // #messages itself — the first real question clears it out for good.
+    if (!firstQuestionSent){
+      firstQuestionSent = true;
+      els.messages.innerHTML = "";
+    }
+    var div = document.createElement("div");
+    div.className = "msg user";
+    var span = document.createElement("span");
+    span.className = "msg-user-text";
+    span.textContent = text;
+    div.appendChild(span);
+    els.messages.appendChild(div);
+    els.messages.scrollTop = els.messages.scrollHeight;
+    return div;
+  }
+
+  // Adds a small 📌 button to a previously-rendered user bubble that saves
+  // `question` as a persisted chip (M7b) — called once the matching answer
+  // has landed, never at question-send time.
+  function attachPinButton(msgEl, question){
+    if (!msgEl || msgEl.querySelector(".pin-btn")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pin-btn";
+    btn.title = t("pinQuestionTitle");
+    btn.setAttribute("aria-label", t("pinQuestionTitle"));
+    btn.innerHTML = iconSvg("pin", 12);
+    btn.addEventListener("click", function(){
+      pinChip(question);
+      btn.classList.add("pinned");
+    });
+    msgEl.appendChild(btn);
+  }
+
+  function addAgentMessage(result, isError, filenameHint){
+    var div = document.createElement("div");
+    div.className = "msg agent" + (isError ? " error" : "");
+    var html = "";
+    // M8: answer-latency badge, muted/tabular-nums, in the bubble's header
+    // area — only shown when the caller measured an elapsed time.
+    if (typeof result.latencySecs === "number"){
+      html += '<div class="msg-meta"><span class="latency-badge" title="' +
+        escapeHtml(t("latencyTitle")) + '">' + result.latencySecs.toFixed(1) + "s</span></div>";
+    }
+    html += '<div class="md-content">' + renderMarkdown(result.answer || "") + "</div>";
+    if (result.sql){
+      var uid = "sql-" + (++cardSeq);
+      html += '<span class="sql-toggle" data-target="' + uid + '">' + t("showSql") + '</span>';
+      html += '<pre class="sql" id="' + uid + '">' + highlightSql(result.sql) + '</pre>';
+    }
+    if (result.rows && result.rows.length){
+      var dataUid = "data-" + (++cardSeq);
+      html += '<span class="data-toggle" data-target="' + dataUid + '">' + t("showData") + '</span>';
+      // M8: small CSV download icon next to "Show data" (works even while
+      // the table itself is collapsed — no need to open it first).
+      html += '<button type="button" class="csv-btn" title="' + escapeHtml(t("downloadCsv")) +
+        '" aria-label="' + escapeHtml(t("downloadCsv")) + '">' + iconSvg("download", 14) + '</button>';
+      html += '<div class="data-table-wrap" id="' + dataUid + '">' + buildRowsTableHtml(result.rows, 50) + '</div>';
+    }
+    if (result.citations && result.citations.length){
+      var seen = {};
+      var chips = [];
+      result.citations.forEach(function(c){
+        if (!c || !c.source_file || seen[c.source_file]) return;
+        seen[c.source_file] = true;
+        chips.push('<span class="citation-chip">' + escapeHtml(c.source_file) + '</span>');
+      });
+      if (chips.length){
+        html += '<div class="citations">' + chips.join("") + '</div>';
+      }
+    }
+    // M12: feedback row — deliberately non-functional (user's request):
+    // thumbs only toggle a local, mutually-exclusive selected state; the
+    // "Feedback" button opens nothing (title-only "not wired" tooltip).
+    html += '<div class="feedback-row">' +
+      '<button type="button" class="feedback-icon-btn feedback-thumb" data-dir="up" ' +
+        'title="' + escapeHtml(t("feedbackGoodTitle")) + '" aria-label="' + escapeHtml(t("feedbackGoodTitle")) + '" aria-pressed="false">' +
+        iconSvg("thumb-up", 14) + '</button>' +
+      '<button type="button" class="feedback-icon-btn feedback-thumb" data-dir="down" ' +
+        'title="' + escapeHtml(t("feedbackBadTitle")) + '" aria-label="' + escapeHtml(t("feedbackBadTitle")) + '" aria-pressed="false">' +
+        iconSvg("thumb-down", 14) + '</button>' +
+      '<button type="button" class="feedback-text-btn" title="' + escapeHtml(t("feedbackNotWiredTitle")) + '">' +
+        '<span class="btn-icon">' + iconSvg("comment", 12) + '</span>' + escapeHtml(t("feedbackButton")) + '</button>' +
+      '</div>';
+    div.innerHTML = html;
+    els.messages.appendChild(div);
+    els.messages.scrollTop = els.messages.scrollHeight;
+
+    var toggle = div.querySelector(".sql-toggle");
+    if (toggle){
+      toggle.addEventListener("click", function(){
+        var pre = document.getElementById(toggle.getAttribute("data-target"));
+        var open = pre.classList.toggle("open");
+        toggle.textContent = open ? t("hideSql") : t("showSql");
+      });
+    }
+    var dataToggle = div.querySelector(".data-toggle");
+    if (dataToggle){
+      dataToggle.addEventListener("click", function(){
+        var wrap = document.getElementById(dataToggle.getAttribute("data-target"));
+        var open = wrap.classList.toggle("open");
+        dataToggle.textContent = open ? t("hideData") : t("showData");
+      });
+    }
+    var csvBtn = div.querySelector(".csv-btn");
+    if (csvBtn){
+      csvBtn.addEventListener("click", function(){
+        downloadCsv(result.rows, filenameHint || result.question || t("csvDefaultFilename"));
+      });
+    }
+    // M12: thumbs are mutually exclusive and purely local (no request is
+    // ever sent) — clicking the already-selected thumb deselects it back
+    // to neutral, clicking the other one switches the selection.
+    var thumbBtns = div.querySelectorAll(".feedback-thumb");
+    Array.prototype.forEach.call(thumbBtns, function(btn){
+      btn.addEventListener("click", function(){
+        var wasSelected = btn.classList.contains("selected");
+        Array.prototype.forEach.call(thumbBtns, function(b){
+          b.classList.remove("selected");
+          b.setAttribute("aria-pressed", "false");
+        });
+        if (!wasSelected){
+          btn.classList.add("selected");
+          btn.setAttribute("aria-pressed", "true");
+        }
+      });
+    });
+  }
+
+  // M11 addendum 2: shared "Show SQL" disclosure builder for a trace step's
+  // body — either a single statement (`sql`, the pre-existing run_sql-style
+  // case) or a titled list of them (`sqlList`, one {title, sql} per KPI —
+  // the build_dashboard case). Appended directly into `body` and wires its
+  // own click handler; callers hold no reference back to it.
+  function appendSqlDisclosure(body, sql, sqlList){
+    if (sqlList && sqlList.length){
+      var listUid = "trace-sql-" + (++cardSeq);
+      var listToggle = document.createElement("span");
+      listToggle.className = "sql-toggle";
+      listToggle.setAttribute("data-target", listUid);
+      listToggle.textContent = t("showSql");
+      body.appendChild(listToggle);
+      var list = document.createElement("div");
+      list.className = "trace-sql-list";
+      list.id = listUid;
+      sqlList.forEach(function(item){
+        var itemEl = document.createElement("div");
+        itemEl.className = "trace-sql-item";
+        var titleEl = document.createElement("div");
+        titleEl.className = "trace-sql-item-title";
+        titleEl.textContent = item.title || "";
+        itemEl.appendChild(titleEl);
+        var pre = document.createElement("pre");
+        pre.className = "sql";
+        pre.innerHTML = highlightSql(item.sql);
+        itemEl.appendChild(pre);
+        list.appendChild(itemEl);
+      });
+      body.appendChild(list);
+      listToggle.addEventListener("click", function(){
+        var open = list.classList.toggle("open");
+        listToggle.textContent = open ? t("hideSql") : t("showSql");
+      });
+    } else if (sql){
+      var uid = "trace-sql-" + (++cardSeq);
+      var toggle = document.createElement("span");
+      toggle.className = "sql-toggle";
+      toggle.setAttribute("data-target", uid);
+      toggle.textContent = t("showSql");
+      body.appendChild(toggle);
+      var pre2 = document.createElement("pre");
+      pre2.className = "sql";
+      pre2.id = uid;
+      pre2.innerHTML = highlightSql(sql);
+      body.appendChild(pre2);
+      toggle.addEventListener("click", function(){
+        var open = pre2.classList.toggle("open");
+        toggle.textContent = open ? t("hideSql") : t("showSql");
+      });
+    }
+  }
+
+  // ------------------------------------------------------- live agent trace
+  // Renders the pending bubble that fills up with steps as SSE events
+  // arrive from GET /api/ask/stream (see streamAsk() below).
+  function createTraceBubble(){
+    var el = document.createElement("div");
+    el.className = "trace-bubble";
+    els.messages.appendChild(el);
+    els.messages.scrollTop = els.messages.scrollHeight;
+
+    function addStep(opts){
+      // opts: {icon, label, callId, errorStep, retryAttempt, reason, sql, sqlList}
+      // `icon` is an ICONS key (M10) — see iconSvg() above — not raw markup.
+      var step = document.createElement("div");
+      step.className = "trace-step" + (opts.errorStep ? " trace-error" : "");
+      if (opts.callId) step.setAttribute("data-call-id", opts.callId);
+
+      var iconWrap = document.createElement("span");
+      iconWrap.className = "trace-icon";
+      iconWrap.innerHTML = iconSvg(opts.icon || "chart", 16);
+      step.appendChild(iconWrap);
+
+      var body = document.createElement("span");
+      body.className = "trace-body";
+
+      var row = document.createElement("span");
+      row.className = "trace-row";
+      var label = document.createElement("span");
+      label.className = "trace-label";
+      label.textContent = opts.label;
+      row.appendChild(label);
+      if (opts.retryAttempt){
+        var retryBadge = document.createElement("span");
+        retryBadge.className = "retry-badge";
+        retryBadge.textContent = t("traceRetryBadge").replace("{n}", opts.retryAttempt);
+        row.appendChild(retryBadge);
+      }
+      body.appendChild(row);
+
+      if (opts.reason){
+        var reasonEl = document.createElement("span");
+        reasonEl.className = "retry-reason";
+        reasonEl.textContent = opts.reason;
+        body.appendChild(reasonEl);
+      }
+      appendSqlDisclosure(body, opts.sql, opts.sqlList);
+      step.appendChild(body);
+      el.appendChild(step);
+      els.messages.scrollTop = els.messages.scrollHeight;
+      return step;
+    }
+
+    function markDone(callId, secs){
+      if (!callId) return;
+      var step = el.querySelector('.trace-step[data-call-id="' + CSS.escape(callId) + '"]');
+      if (!step) return;
+      step.classList.add("done");
+      // Per-step duration (M7 hotfix): makes "where did the time go?"
+      // answerable from the trace itself when a question runs long, and
+      // feeds the collapsed summary's total (collapseTrace() below).
+      if (typeof secs === "number" && !step.querySelector(".step-secs")){
+        var badge = document.createElement("span");
+        badge.className = "step-secs";
+        badge.textContent = secs.toFixed(1) + "s";
+        var row = step.querySelector(".trace-row");
+        (row || step).appendChild(badge);
+      }
+    }
+
+    // M11 addendum 2: the build_dashboard tool_call step is created (via
+    // addStep, at "tool_call" time) before any SQL is known — the per-KPI
+    // SQL only arrives later in the "dashboard" SSE event. This attaches
+    // that list onto the already-rendered step by callId, post-hoc.
+    function attachSqlList(callId, sqlList){
+      if (!callId || !sqlList || !sqlList.length) return;
+      var step = el.querySelector('.trace-step[data-call-id="' + CSS.escape(callId) + '"]');
+      if (!step) return;
+      var body = step.querySelector(".trace-body");
+      if (!body) return;
+      appendSqlDisclosure(body, null, sqlList);
+      els.messages.scrollTop = els.messages.scrollHeight;
+    }
+
+    return { el: el, addStep: addStep, markDone: markDone, attachSqlList: attachSqlList };
+  }
+
+  // After the answer arrives, the trace collapses into a single Claude-
+  // style summary row — "<n> steps · <total>s" with a chevron — placed
+  // exactly where the live trace bubble was (M10 §5 "Trace panel"). The
+  // full step list (icons/labels/secs/nested SQL toggles, unchanged) moves
+  // inside, collapsed by default, and expands via a real <button
+  // aria-expanded>. Replaces the earlier plain <details> element.
+  function collapseTrace(trace){
+    var steps = trace.el.querySelectorAll(".trace-step");
+    var stepCount = steps.length;
+    var totalSecs = 0;
+    Array.prototype.forEach.call(steps, function(s){
+      var badge = s.querySelector(".step-secs");
+      var v = badge ? parseFloat(badge.textContent) : NaN;
+      if (!isNaN(v)) totalSecs += v;
+    });
+
+    var summary = document.createElement("div");
+    summary.className = "trace-summary";
+
+    var toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "trace-summary-toggle";
+    toggleBtn.setAttribute("aria-expanded", "false");
+    var textSpan = document.createElement("span");
+    textSpan.className = "trace-summary-text";
+    textSpan.textContent = t("traceSummary").replace("{n}", stepCount).replace("{s}", totalSecs.toFixed(1));
+    toggleBtn.appendChild(textSpan);
+    var chevron = document.createElement("span");
+    chevron.className = "trace-summary-chevron";
+    chevron.innerHTML = iconSvg("chevron-right", 14);
+    toggleBtn.appendChild(chevron);
+    summary.appendChild(toggleBtn);
+
+    var bodyWrap = document.createElement("div");
+    bodyWrap.className = "trace-summary-body-wrap";
+    var bodyInner = document.createElement("div");
+    bodyInner.className = "trace-summary-body-inner";
+    while (trace.el.firstChild){
+      bodyInner.appendChild(trace.el.firstChild);
+    }
+    bodyWrap.appendChild(bodyInner);
+    summary.appendChild(bodyWrap);
+
+    toggleBtn.addEventListener("click", function(){
+      var expanded = toggleBtn.getAttribute("aria-expanded") === "true";
+      toggleBtn.setAttribute("aria-expanded", String(!expanded));
+      bodyWrap.classList.toggle("open", !expanded);
+      chevron.classList.toggle("open", !expanded);
+    });
+
+    if (trace.el.parentNode){
+      trace.el.parentNode.replaceChild(summary, trace.el);
+    }
+  }
+
+  // Maps one raw SSE trace event to a rendered step (or no-op — tool_result
+  // and chart events update state silently rather than adding a new line).
+  // Icons are ICONS keys (M10 §5) — no emoji anywhere in UI chrome.
+  function renderTraceEvent(trace, event){
+    switch (event.type){
+      case "plan":
+        trace.addStep({icon: "plan-list", label: t("traceLabelPlan")});
+        break;
+      case "context":
+        // M7a/M7b: stored conversation history was injected into this
+        // question's system prompt — surface that as its own trace line.
+        trace.addStep({icon: "brain", label: t("traceLabelContext")});
+        break;
+      case "tool_call":
+        if (event.name === "get_schema"){
+          trace.addStep({icon: "table", label: t("traceLabelSchema"), callId: event.call_id});
+        } else if (event.name === "search_knowledge"){
+          var q = (event.arguments && event.arguments.query) || "";
+          trace.addStep({
+            icon: "book",
+            label: t("traceLabelSearching") + (q ? ': "' + q + '"' : ""),
+            callId: event.call_id
+          });
+        } else if (event.name === "get_metric"){
+          var key = (event.arguments && event.arguments.key) || "";
+          trace.addStep({
+            icon: "chart",
+            label: t("traceLabelMetric") + (key ? ": " + key : ""),
+            callId: event.call_id
+          });
+        } else if (event.name === "build_dashboard"){
+          trace.addStep({icon: "chart", label: t("traceLabelDashboard"), callId: event.call_id});
+        }
+        // run_sql's line is rendered by the "sql" event instead, so the
+        // query text is available inline as soon as the step appears.
+        break;
+      case "sql":
+        trace.addStep({icon: "database", label: t("traceLabelSql"), sql: event.sql});
+        break;
+      case "retry":
+        trace.addStep({
+          icon: "alert",
+          label: t("traceLabelRetry"),
+          retryAttempt: event.attempt,
+          reason: event.error
+        });
+        break;
+      case "tool_result":
+        trace.markDone(event.call_id, event.secs);
+        break;
+      case "error":
+        trace.addStep({icon: "alert", label: event.message, errorStep: true});
+        break;
+      // "chart" carries no visible trace line of its own; it is folded
+      // into the final answer bubble instead.
+      default:
+        break;
+    }
+  }
+
+  var typingEl = null;
+  // M10 §5 "Thinking animation": the pending-answer placeholder reuses the
+  // header's own sound-bars mark (small, always animating while shown)
+  // instead of the old dot ellipsis.
+  function showTyping(label){
+    hideTyping();
+    typingEl = document.createElement("div");
+    typingEl.className = "typing";
+    var eq = document.createElement("span");
+    eq.className = "mini-eq eq-mark thinking";
+    eq.setAttribute("aria-hidden", "true");
+    eq.innerHTML = eqBarsSvg(16);
+    var text = document.createElement("span");
+    text.textContent = label;
+    typingEl.appendChild(eq);
+    typingEl.appendChild(text);
+    els.messages.appendChild(typingEl);
+    els.messages.scrollTop = els.messages.scrollHeight;
+  }
+  function hideTyping(){
+    if (typingEl && typingEl.parentNode){ typingEl.parentNode.removeChild(typingEl); }
+    typingEl = null;
+  }
+
+  // ---------------------------------------------------------------- charts
+  // DESIGN.md §2 "Color — charts": fixed categorical order, never cycled,
+  // assigned to entities by index (not by rank/value) — index 0 is always
+  // the green brand anchor. Single-series charts (the vast majority of the
+  // 12 registered metrics) use PALETTE[0] uniformly; the 3 metrics that
+  // carry a `series` field (attribution_first_vs_last, pairing_rate_by_
+  // platform_market, completion_by_channel_device) assign PALETTE[i] by
+  // first-seen order of that series' distinct values.
+  var CHART_PALETTE = ["#2F9E63", "#3D72C0", "#CE7A1A", "#8B55C9", "#C24E2A"];
+  // Sequential green ramp reserved for any future heat/magnitude chart —
+  // no such chart exists yet in this dataset's registry, so this constant
+  // is defined per §2 but currently unused.
+  var CHART_SEQUENTIAL_RAMP = ["#E7F0EA", "#9CCDB0", "#468254", "#154734"];
+  // M10 §1b: these three start as the light-theme values but are re-read
+  // from the page's own computed CSS custom properties on every theme
+  // switch (see retintCharts() below) — series colors never change (§2),
+  // only grid/axis/label/legend tokens do.
+  var CHART_AXIS_LINE_COLOR = "#E4E3DE";   // --border
+  var CHART_AXIS_LABEL_COLOR = "#8A877F";  // --ink-muted
+  var CHART_LEGEND_TEXT_COLOR = "#55534E"; // --ink-soft
+  // "2px gaps between adjacent fills" (§2): rather than fighting barGap's
+  // percentage-of-bar-width semantics for an exact pixel gap, each bar's
+  // fill is outlined in the card's own background color at 2px — visually
+  // this reads as a gap between adjacent bars/segments while keeping the
+  // rounded-corner geometry (borderRadius) intact on every side.
+  var CHART_BAR_GAP_COLOR = "#FFFFFF"; // --surface (card background)
+
+  function seriesColorFor(index){ return CHART_PALETTE[index % CHART_PALETTE.length]; }
+
+  // Functions (not static objects) so every buildEchartsOption() call —
+  // including the re-render retintCharts() triggers after a theme switch —
+  // picks up the CURRENT color variables above, not whatever they were
+  // when the module first loaded.
+  function axisLabelStyle(extra){ return Object.assign({fontSize: 10, color: CHART_AXIS_LABEL_COLOR}, extra || {}); }
+  function axisLineStyle(){ return {lineStyle: {color: CHART_AXIS_LINE_COLOR}}; }
+  function splitLineStyle(){ return {lineStyle: {color: CHART_AXIS_LINE_COLOR}}; }
+  function legendTextStyle(){ return {fontSize: 10, color: CHART_LEGEND_TEXT_COLOR}; }
+
+  // M10 §1b: re-reads the grid/axis/label/legend tokens from the page's
+  // current computed CSS custom properties and re-renders every live
+  // chart with them — called once on every theme toggle (applyTheme()).
+  // Series colors are untouched (§2 fixed palette, same in both themes).
+  function retintCharts(){
+    try {
+      var cs = getComputedStyle(document.documentElement);
+      CHART_AXIS_LINE_COLOR = (cs.getPropertyValue("--border") || "").trim() || CHART_AXIS_LINE_COLOR;
+      CHART_AXIS_LABEL_COLOR = (cs.getPropertyValue("--ink-muted") || "").trim() || CHART_AXIS_LABEL_COLOR;
+      CHART_LEGEND_TEXT_COLOR = (cs.getPropertyValue("--ink-soft") || "").trim() || CHART_LEGEND_TEXT_COLOR;
+      CHART_BAR_GAP_COLOR = (cs.getPropertyValue("--surface") || "").trim() || CHART_BAR_GAP_COLOR;
+    } catch (e) { /* keep whatever colors were already in effect */ }
+    chartInstances.forEach(function(inst){
+      if (inst && inst._fcChart && inst._fcRows){
+        inst.setOption(buildEchartsOption(inst._fcChart, inst._fcRows), true);
+      }
+    });
+  }
+
+  // ------------------------------------------------------- M11 addendum: ideal chart form
+  // Dashboard charts almost always rendered as a plain vertical bar because
+  // every KPI's config declares one static `chart.type`. pickIdealChart()
+  // instead computes the most LEGIBLE form for the actual result shape in
+  // front of it (dataviz method, priority order below) and is used as the
+  // DEFAULT — the per-card switcher (chartTypeCycle) still lets a viewer
+  // override it, and a choice already persisted in board state beats this
+  // heuristic on reload (see withPersistedChartType, applied AFTER this at
+  // both call sites: renderDashboardGrid and finishWithResult). Pure
+  // function: never mutates `rows`, returns a fresh array when it needs a
+  // different order and the same reference otherwise.
+  var IDEAL_LONG_LABEL_CHARS = 10; // channel names like "paid_social_meta" start crowding a rotated x-axis past this
+  var IDEAL_MANY_CATEGORIES = 6;   // more bars than this reads better horizontal than rotated-label vertical
+  var IDEAL_ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}/;
+
+  function idealLooksTemporal(xKey, rows){
+    if (/(^|_)(date|day|week|month|year|time)(_|$)/i.test(String(xKey || ""))) return true;
+    return rows.length > 0 && typeof rows[0][xKey] === "string" && IDEAL_ISO_DATE_RE.test(rows[0][xKey]);
+  }
+
+  // Funnel/step-ordered data (funnel_overview's stages, step_conversion's
+  // steps, and this module's dash_funnel_stages/dash_step_conversions) is
+  // never a candidate for re-sorting: the whole point is stage 1 -> 2 -> 3.
+  // Detected generically — by the app's own "stage"/"step" x-column naming
+  // convention, or by a companion "<x>_order" column when present — rather
+  // than hardcoding metric keys, so a future stage-ordered KPI keeps working
+  // without a JS change.
+  function idealLooksStageOrdered(spec, rows){
+    if (!spec || spec.series) return false;
+    if (spec.type === "funnel") return true;
+    var xk = String(spec.x || "").toLowerCase();
+    if (xk === "stage" || xk === "step") return true;
+    return rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], spec.x + "_order");
+  }
+
+  function pickIdealChart(rows, spec){
+    if (!spec || !rows || !rows.length) return {chart: spec, rows: rows};
+
+    // 1. single row, single measure -> stat tile. makeCard() applies this
+    //    same isStatShape() gate independently of chart.type, so this just
+    //    keeps this function's own contract honest for any other caller.
+    if (isStatShape(rows)){
+      return {chart: Object.assign({}, spec, {type: "stat"}), rows: rows};
+    }
+
+    // 2. temporal x -> line. (Guarded off cross-tab series data — none of
+    //    this app's KPIs combine the two, and buildEchartsOption's "line"
+    //    case only ever plots one series, so forcing a hypothetical
+    //    time+series result into a line would silently drop the breakdown.)
+    if (!spec.series && idealLooksTemporal(spec.x, rows)){
+      return {chart: Object.assign({}, spec, {type: "line"}), rows: rows};
+    }
+
+    // 3. funnel / stage-ordered -> keep the funnel/horizontal-bar treatment;
+    //    rows stay in the order the SQL already gave them (their order IS
+    //    the story) — never resorted by value.
+    if (idealLooksStageOrdered(spec, rows)){
+      return {chart: Object.assign({}, spec, {type: "funnel"}), rows: rows};
+    }
+
+    // 4. cross-tab with a series dimension -> grouped bar. DESIGN.md §2's
+    //    legend rule (>=2 series -> legend on) already keys off series
+    //    count at render time, unaffected by this heuristic.
+    if (spec.series){
+      return {chart: Object.assign({}, spec, {type: "bar"}), rows: rows};
+    }
+
+    // 5. plain categorical -> sort once, descending by value (so the
+    //    switcher's bar<->hbar toggle keeps the same meaningful order);
+    //    horizontal when there are more than IDEAL_MANY_CATEGORIES bars OR
+    //    any label is long enough to crowd a rotated axis, vertical bar
+    //    otherwise. Never pie/donut/dual-axis (rule 6) — those stay
+    //    switcher-only options, never this function's own pick.
+    var sorted = rows.slice().sort(function(a, b){
+      var av = a[spec.y], bv = b[spec.y];
+      return (typeof bv === "number" ? bv : 0) - (typeof av === "number" ? av : 0);
+    });
+    var longLabel = sorted.some(function(r){
+      var v = r[spec.x];
+      return String(v == null ? "" : v).length > IDEAL_LONG_LABEL_CHARS;
+    });
+    var horizontal = sorted.length > IDEAL_MANY_CATEGORIES || longLabel;
+    return {chart: Object.assign({}, spec, {type: horizontal ? "hbar" : "bar"}), rows: sorted};
+  }
+
+  function buildEchartsOption(chart, rows){
+    var xKey = chart.x, yKey = chart.y, seriesKey = chart.series;
+
+    if (chart.type === "line"){
+      var cats = rows.map(function(r){ return r[xKey]; });
+      var data = rows.map(function(r){ return r[yKey]; });
+      return {
+        grid: {left: 40, right: 16, top: 20, bottom: 40},
+        tooltip: {trigger: "axis", valueFormatter: fmtValue},
+        xAxis: {type: "category", data: cats, axisLabel: axisLabelStyle({rotate: 30}), axisLine: axisLineStyle()},
+        yAxis: {type: "value", axisLabel: axisLabelStyle({formatter: fmtValue}), splitLine: splitLineStyle()},
+        series: [{type: "line", data: data, smooth: true, color: seriesColorFor(0), areaStyle: {opacity: .08}}]
+      };
+    }
+
+    if (chart.type === "pie"){
+      // Single-series only (see chartTypeCycle() below) — grouped/series
+      // data has no sensible pie rendering, so the switcher never offers
+      // this type when `chart.series` is present.
+      // DESIGN.md §2: legend present for >=2 series, none for single
+      // series (title names it) — a pie is a single echarts series
+      // regardless of slice count, so no legend; each slice already
+      // carries its own on-chart name label instead.
+      var pdata = rows.map(function(r, i){
+        return {name: r[xKey], value: r[yKey], itemStyle: {color: seriesColorFor(i)}};
+      });
+      return {
+        tooltip: {trigger: "item", valueFormatter: fmtValue},
+        series: [{
+          type: "pie",
+          radius: ["35%", "70%"],
+          data: pdata,
+          itemStyle: {borderColor: CHART_BAR_GAP_COLOR, borderWidth: 2},
+          label: Object.assign({formatter: function(p){ return p.name; }}, legendTextStyle())
+        }]
+      };
+    }
+
+    if (chart.type === "funnel"){
+      // Rendered as a horizontal bar per the M2 spec (funnel type -> horizontal bar).
+      // Data-end rounding is on the right (away from the axis) per §2.
+      var labels = rows.map(function(r){ return r[xKey]; });
+      var values = rows.map(function(r){ return r[yKey]; });
+      return {
+        grid: {left: 120, right: 24, top: 10, bottom: 20},
+        tooltip: {trigger: "axis", valueFormatter: fmtValue},
+        xAxis: {type: "value", axisLabel: axisLabelStyle({formatter: fmtValue}), splitLine: splitLineStyle()},
+        yAxis: {type: "category", data: labels, inverse: true, axisLabel: axisLabelStyle(), axisLine: axisLineStyle()},
+        series: [{
+          type: "bar",
+          data: values,
+          itemStyle: {color: seriesColorFor(0), borderRadius: [0, 4, 4, 0], borderColor: CHART_BAR_GAP_COLOR, borderWidth: 2},
+          label: Object.assign({show: true, position: "right", formatter: function(p){ return fmtValue(p.value); }}, legendTextStyle())
+        }]
+      };
+    }
+
+    if (chart.type === "hbar"){
+      // M11 addendum: the ideal-chart heuristic's pick for plain categorical
+      // data with >6 categories or long labels (pickIdealChart rule 5).
+      // Same shape as "funnel" above (bar on a category axis) but WITHOUT
+      // funnel's do-not-resort guarantee — rows arrive already sorted
+      // descending by value (pickIdealChart does the sorting once, so the
+      // switcher's bar<->hbar toggle keeps that same order), rendered here
+      // top-to-bottom as given. Left margin grows with the longest label
+      // instead of funnel's fixed 120px, since generic category labels
+      // (e.g. "paid_social_tiktok") run longer than funnel's stage names.
+      var hLabels = rows.map(function(r){ return r[xKey]; });
+      var hValues = rows.map(function(r){ return r[yKey]; });
+      var hMaxLen = hLabels.reduce(function(m, l){
+        return Math.max(m, String(l == null ? "" : l).length);
+      }, 0);
+      var hLeft = Math.max(90, Math.min(220, hMaxLen * 7 + 24));
+      return {
+        grid: {left: hLeft, right: 24, top: 10, bottom: 20},
+        tooltip: {trigger: "axis", valueFormatter: fmtValue},
+        xAxis: {type: "value", axisLabel: axisLabelStyle({formatter: fmtValue}), splitLine: splitLineStyle()},
+        yAxis: {type: "category", data: hLabels, inverse: true, axisLabel: axisLabelStyle(), axisLine: axisLineStyle()},
+        series: [{
+          type: "bar",
+          data: hValues,
+          itemStyle: {color: seriesColorFor(0), borderRadius: [0, 4, 4, 0], borderColor: CHART_BAR_GAP_COLOR, borderWidth: 2},
+          label: Object.assign({show: true, position: "right", formatter: function(p){ return fmtValue(p.value); }}, legendTextStyle())
+        }]
+      };
+    }
+
+    // default: bar (grouped when a `series` field is present)
+    if (seriesKey){
+      var xVals = [];
+      var seriesVals = [];
+      rows.forEach(function(r){
+        if (xVals.indexOf(r[xKey]) === -1) xVals.push(r[xKey]);
+        if (seriesVals.indexOf(r[seriesKey]) === -1) seriesVals.push(r[seriesKey]);
+      });
+      // DESIGN.md §2: >=2 series -> legend on, text in --ink-soft.
+      var series = seriesVals.map(function(sv, i){
+        return {
+          name: sv,
+          type: "bar",
+          itemStyle: {color: seriesColorFor(i), borderRadius: [4, 4, 0, 0], borderColor: CHART_BAR_GAP_COLOR, borderWidth: 2},
+          data: xVals.map(function(xv){
+            var match = rows.find(function(r){ return r[xKey] === xv && r[seriesKey] === sv; });
+            return match ? match[yKey] : null;
+          })
+        };
+      });
+      return {
+        grid: {left: 50, right: 16, top: 30, bottom: 40},
+        legend: {data: seriesVals, top: 0, textStyle: legendTextStyle()},
+        tooltip: {trigger: "axis", valueFormatter: fmtValue},
+        xAxis: {type: "category", data: xVals, axisLabel: axisLabelStyle({rotate: 20}), axisLine: axisLineStyle()},
+        yAxis: {type: "value", axisLabel: axisLabelStyle({formatter: fmtValue}), splitLine: splitLineStyle()},
+        series: series
+      };
+    }
+
+    // Single-series vertical bar: legend omitted per §2 (the card title
+    // already names it), data-end rounding on top.
+    var cats2 = rows.map(function(r){ return r[xKey]; });
+    var data2 = rows.map(function(r){ return r[yKey]; });
+    return {
+      grid: {left: 50, right: 16, top: 20, bottom: 50},
+      tooltip: {trigger: "axis", valueFormatter: fmtValue},
+      xAxis: {type: "category", data: cats2, axisLabel: axisLabelStyle({rotate: 25}), axisLine: axisLineStyle()},
+      yAxis: {type: "value", axisLabel: axisLabelStyle({formatter: fmtValue}), splitLine: splitLineStyle()},
+      series: [{
+        type: "bar",
+        data: data2,
+        itemStyle: {color: seriesColorFor(0), borderRadius: [4, 4, 0, 0], borderColor: CHART_BAR_GAP_COLOR, borderWidth: 2}
+      }]
+    };
+  }
+
+  // Which chart types a card's switcher cycles through: funnel-type cards
+  // keep their horizontal-bar special case and only toggle bar/line (never
+  // pie); grouped (multi-series) charts skip pie entirely (a pie has no
+  // sensible reading of more than one series); everything else offers bar,
+  // horizontal bar (M11 addendum's "hbar" — see pickIdealChart/
+  // buildEchartsOption), line, and pie (M7b spec, unchanged — pie stays a
+  // manual-only choice; pickIdealChart itself never picks it).
+  function chartTypeCycle(chart){
+    if (chart.type === "funnel") return ["funnel", "line"];
+    if (chart.series) return ["bar", "line"];
+    return ["bar", "hbar", "line", "pie"];
+  }
+
+  // M7b: native HTML5 drag & drop reordering state, shared by every card
+  // (only one card can be dragged at a time).
+  var draggingCard = null;
+  function clearDropIndicators(){
+    Array.prototype.forEach.call(els.grid.querySelectorAll(".card"), function(c){
+      c.classList.remove("drop-before", "drop-after");
+    });
+  }
+  // Given a drop-target card and the pointer position, decide whether the
+  // dragged card should land before or after it — same-row neighbors are
+  // compared left/right, different-row ones top/bottom, so this reads
+  // sensibly in the grid's multi-column layout, not just a single list.
+  function dropsBefore(card, clientX, clientY){
+    var rect = card.getBoundingClientRect();
+    var sameRow = Math.abs(clientY - (rect.top + rect.height / 2)) < rect.height / 2;
+    return sameRow ? (clientX < rect.left + rect.width / 2) : (clientY < rect.top + rect.height / 2);
+  }
+
+  function makeCard(cardData){
+    var card = document.createElement("div");
+    card.className = "card";
+    card.draggable = true;
+    // M8: dashboard layout persistence keys off this — only cards built
+    // from a registered metric (the top-12 dashboard) carry a `key`;
+    // single-question chart cards deliberately have none and are never
+    // written into funnelCopilotBoard_v1 (they are ephemeral, per spec).
+    if (cardData.key) card.dataset.cardKey = cardData.key;
+
+    var chart = cardData.chart;
+    var rows = cardData.rows || [];
+    // M8: a single-row (optionally label+value) result renders as a big-
+    // number stat tile instead of a degenerate one-point chart, in both
+    // chat-answer cards and the dashboard — regardless of the chart spec's
+    // own declared type (a registry `"stat"` type still counts, too).
+    var statShape = !!chart && rows.length > 0 && (chart.type === "stat" || isStatShape(rows));
+    var activeType = chart ? chart.type : null;
+    var inst = null; // this card's echarts instance, if any (kept in sync with chartInstances)
+    var box = null;
+
+    // ---- header: title + latency/close/chart-type/csv controls ----
+    var header = document.createElement("div");
+    header.className = "card-header";
+    var h3 = document.createElement("h3");
+    h3.textContent = cardData.title || "";
+    header.appendChild(h3);
+
+    var actions = document.createElement("div");
+    actions.className = "card-actions";
+
+    // M8: per-card answer-latency badge ("time to render this card's
+    // data"), when the caller measured one.
+    if (typeof cardData.latencySecs === "number"){
+      var latencyBadge = document.createElement("span");
+      latencyBadge.className = "card-latency-badge";
+      latencyBadge.title = t("latencyTitle");
+      latencyBadge.textContent = cardData.latencySecs.toFixed(1) + "s";
+      actions.appendChild(latencyBadge);
+    }
+
+    var canSwitchType = chart && chart.type !== "stat" && !statShape && rows.length;
+    var typeBtn = null;
+    if (canSwitchType){
+      typeBtn = document.createElement("button");
+      typeBtn.type = "button";
+      typeBtn.className = "card-icon-btn";
+      typeBtn.title = t("cardChartTypeTitle");
+      typeBtn.setAttribute("aria-label", t("cardChartTypeTitle"));
+      typeBtn.innerHTML = iconSvg("chart", 14);
+      typeBtn.addEventListener("click", function(){
+        var cycle = chartTypeCycle(chart);
+        var idx = cycle.indexOf(activeType);
+        activeType = cycle[(idx + 1) % cycle.length];
+        renderChartInto(activeType);
+        // M8: persist the chosen chart type per metric key (dashboard
+        // cards only — see the `card.dataset.cardKey` note above).
+        if (cardData.key){
+          boardState.chartType[cardData.key] = activeType;
+          saveBoardState();
+        }
+      });
+      actions.appendChild(typeBtn);
+    }
+
+    if (rows.length){
+      var csvBtn = document.createElement("button");
+      csvBtn.type = "button";
+      csvBtn.className = "card-icon-btn";
+      csvBtn.title = t("downloadCsv");
+      csvBtn.setAttribute("aria-label", t("downloadCsv"));
+      csvBtn.innerHTML = iconSvg("download", 14);
+      csvBtn.addEventListener("click", function(){
+        downloadCsv(rows, cardData.title || t("csvDefaultFilename"));
+      });
+      actions.appendChild(csvBtn);
+    }
+
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "card-close-btn";
+    closeBtn.title = t("cardCloseTitle");
+    closeBtn.setAttribute("aria-label", t("cardCloseTitle"));
+    closeBtn.innerHTML = iconSvg("close", 14);
+    closeBtn.addEventListener("click", function(){
+      if (inst){
+        var idx = chartInstances.indexOf(inst);
+        if (idx !== -1) chartInstances.splice(idx, 1);
+        inst.dispose();
+      }
+      if (card.parentNode) card.parentNode.removeChild(card);
+      // M8: closing a dashboard card persists — it stays closed across a
+      // reload/rebuild until "Reset layout" is used.
+      if (cardData.key){
+        markCardClosed(cardData.key);
+      }
+      maybeShowEmptyState();
+    });
+    actions.appendChild(closeBtn);
+
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // ---- body: stat tile, or chart-box (with a table fallback) ----
+    function renderChartInto(type){
+      if (!box) return;
+      var effectiveChart = Object.assign({}, chart, {type: type});
+      try {
+        if (typeof echarts === "undefined") throw new Error("echarts not loaded");
+        if (!inst){
+          box.innerHTML = "";
+          box.style.height = "";
+          box.style.overflowX = "";
+          inst = echarts.init(box);
+          chartInstances.push(inst);
+        }
+        inst.setOption(buildEchartsOption(effectiveChart, rows), true);
+        // M10: remembered so retintCharts() can rebuild this exact option
+        // (fresh colors, same data) after a theme switch.
+        inst._fcChart = effectiveChart;
+        inst._fcRows = rows;
+      } catch (e) {
+        // Graceful degradation: render the data as a compact table so the
+        // dashboard stays useful even if the chart library fails to load.
+        if (inst){
+          var idx = chartInstances.indexOf(inst);
+          if (idx !== -1) chartInstances.splice(idx, 1);
+          inst.dispose();
+          inst = null;
+        }
+        box.innerHTML = buildRowsTableHtml(rows, 12);
+        box.style.height = "auto";
+        box.style.overflowX = "auto";
+      }
+    }
+
+    if (statShape){
+      var tile = document.createElement("div");
+      tile.className = "stat-tile";
+      var fields = statShapeFields(rows);
+      var value = rows[0][fields.valueKey];
+      var label = fields.labelKey ? rows[0][fields.labelKey] : (chart.y || fields.valueKey || "");
+      tile.innerHTML = '<div class="value">' + escapeHtml(fmtStatValue(value)) + '</div>' +
+                        '<div class="label">' + escapeHtml(String(label == null ? "" : label)) + '</div>';
+      card.appendChild(tile);
+    } else if (chart && rows.length){
+      box = document.createElement("div");
+      box.className = "chart-box";
+      card.appendChild(box);
+      renderChartInto(activeType);
+    }
+
+    // ---- "Ask about this chart" (M7b) ----
+    if (chart && rows.length){
+      var askBtn = document.createElement("button");
+      askBtn.type = "button";
+      askBtn.className = "card-ask-btn";
+      askBtn.textContent = t("cardAskAbout");
+      askBtn.addEventListener("click", function(){
+        els.input.value = t("askAboutPrefix").replace("{title}", cardData.title || "");
+        els.input.focus();
+      });
+      card.appendChild(askBtn);
+    }
+
+    // M8+: the narrative under each chart is collapsible (user request) —
+    // the dashboard stays chart-first, details one click away.
+    // M11 addendum 2: the same Details area also carries "Show SQL"/"Show
+    // data" toggles (same pattern as addAgentMessage's chat bubbles), so
+    // the KPI's exact executed statement and its result rows are always
+    // one click away, for both the top-12 dashboard and a filtered
+    // build_dashboard result.
+    if (cardData.answer || cardData.consent_note || cardData.sql || rows.length){
+      var det = document.createElement("details");
+      det.className = "card-notes";
+      var sum = document.createElement("summary");
+      sum.textContent = t("cardNotesToggle");
+      det.appendChild(sum);
+      if (cardData.answer){
+        var ans = document.createElement("div");
+        ans.className = "answer md-content";
+        ans.innerHTML = renderMarkdown(cardData.answer);
+        det.appendChild(ans);
+      }
+      if (cardData.consent_note){
+        var note = document.createElement("div");
+        note.className = "consent";
+        note.textContent = cardData.consent_note;
+        det.appendChild(note);
+      }
+      if (cardData.sql){
+        var cardSqlUid = "sql-" + (++cardSeq);
+        var sqlToggle = document.createElement("span");
+        sqlToggle.className = "sql-toggle";
+        sqlToggle.setAttribute("data-target", cardSqlUid);
+        sqlToggle.textContent = t("showSql");
+        det.appendChild(sqlToggle);
+        var sqlPre = document.createElement("pre");
+        sqlPre.className = "sql";
+        sqlPre.id = cardSqlUid;
+        sqlPre.innerHTML = highlightSql(cardData.sql);
+        det.appendChild(sqlPre);
+        sqlToggle.addEventListener("click", function(){
+          var pre = document.getElementById(cardSqlUid);
+          var open = pre.classList.toggle("open");
+          sqlToggle.textContent = open ? t("hideSql") : t("showSql");
+        });
+      }
+      if (rows.length){
+        var cardDataUid = "data-" + (++cardSeq);
+        var dataToggleEl = document.createElement("span");
+        dataToggleEl.className = "data-toggle";
+        dataToggleEl.setAttribute("data-target", cardDataUid);
+        dataToggleEl.textContent = t("showData");
+        det.appendChild(dataToggleEl);
+        var dataWrap = document.createElement("div");
+        dataWrap.className = "data-table-wrap";
+        dataWrap.id = cardDataUid;
+        dataWrap.innerHTML = buildRowsTableHtml(rows, 50);
+        det.appendChild(dataWrap);
+        dataToggleEl.addEventListener("click", function(){
+          var wrap = document.getElementById(cardDataUid);
+          var open = wrap.classList.toggle("open");
+          dataToggleEl.textContent = open ? t("hideData") : t("showData");
+        });
+      }
+      card.appendChild(det);
+    }
+
+    // ---- drag & drop reordering (M7b, native HTML5 DnD) ----
+    card.addEventListener("dragstart", function(e){
+      draggingCard = card;
+      card.classList.add("dragging");
+      // Firefox requires data to be set for the drag to start at all.
+      try { e.dataTransfer.setData("text/plain", ""); } catch (err) { /* ignore */ }
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    });
+    card.addEventListener("dragend", function(){
+      card.classList.remove("dragging");
+      clearDropIndicators();
+      draggingCard = null;
+      resizeChartsSoon();
+    });
+    card.addEventListener("dragover", function(e){
+      if (!draggingCard || draggingCard === card) return;
+      e.preventDefault();
+      var before = dropsBefore(card, e.clientX, e.clientY);
+      clearDropIndicators();
+      card.classList.add(before ? "drop-before" : "drop-after");
+    });
+    card.addEventListener("dragleave", function(){
+      card.classList.remove("drop-before", "drop-after");
+    });
+    card.addEventListener("drop", function(e){
+      if (!draggingCard || draggingCard === card) return;
+      e.preventDefault();
+      var before = dropsBefore(card, e.clientX, e.clientY);
+      clearDropIndicators();
+      els.grid.insertBefore(draggingCard, before ? card : card.nextSibling);
+      resizeChartsSoon();
+      syncBoardOrderFromDom(); // M8: persist the new card order
+    });
+
+    return card;
+  }
+
+  function clearEmptyState(){
+    var empty = els.grid.querySelector(".empty-state");
+    if (empty) empty.remove();
+  }
+
+  function maybeShowEmptyState(){
+    if (els.grid.children.length) return;
+    var empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = t("emptyState");
+    els.grid.appendChild(empty);
+  }
+
+  function prependCard(cardData){
+    clearEmptyState();
+    var card = makeCard(cardData);
+    els.grid.insertBefore(card, els.grid.firstChild);
+    resizeChartsSoon();
+  }
+
+  // ECharts inits on detached nodes produce 0-width canvases; resize after
+  // the cards are actually laid out in the DOM.
+  function resizeChartsSoon(){
+    requestAnimationFrame(function(){
+      chartInstances.forEach(function(inst){ inst.resize(); });
+    });
+  }
+
+  // M8: renders the top-12 dashboard's cards, applying (and keeping in
+  // sync with) the persisted board layout — order, closed cards, chosen
+  // chart type per card key. `requestStart` (Date.now() at the /api/
+  // dashboard call), when given, drives each card's per-card latency
+  // badge. `cards` is cached as `lastDashboardCards` so "Reset layout"
+  // can redraw the same data with defaults reapplied, with no re-fetch.
+  var lastDashboardCards = null;
+  var lastDashboardRequestStart = null;
+
+  function renderDashboardGrid(cards, requestStart){
+    lastDashboardCards = cards;
+    lastDashboardRequestStart = typeof requestStart === "number" ? requestStart : null;
+
+    chartInstances.forEach(function(inst){ inst.dispose(); });
+    chartInstances = [];
+    els.grid.innerHTML = "";
+    if (!cards.length){
+      maybeShowEmptyState();
+      return;
+    }
+    var laidOut = applyBoardLayout(cards);
+    if (!laidOut.length){
+      // Every card was closed in a previous session — still a valid state,
+      // just show the normal empty-state message rather than a blank grid.
+      maybeShowEmptyState();
+      return;
+    }
+    laidOut.forEach(function(c){
+      // M11 addendum: pickIdealChart() supplies the DEFAULT form; a chart
+      // type already persisted for this card's key (withPersistedChartType)
+      // still wins over that default on reload — precedence is
+      // persisted override > ideal heuristic > server-declared chart.type.
+      var ideal = pickIdealChart(c.rows, c.chart);
+      var cardData = {
+        key: c.key,
+        title: c.title,
+        chart: withPersistedChartType(c.key, ideal.chart),
+        rows: ideal.rows,
+        answer: c.answer,
+        consent_note: c.consent_note || "",
+        // M11 addendum 2: the exact executed SQL, already formatted for
+        // display by the backend — surfaced in this card's Details area.
+        sql: c.sql,
+        latencySecs: lastDashboardRequestStart === null ? undefined : (Date.now() - lastDashboardRequestStart) / 1000
+      };
+      els.grid.appendChild(makeCard(cardData));
+    });
+    resizeChartsSoon();
+  }
+
+  window.addEventListener("resize", function(){
+    chartInstances.forEach(function(inst){ inst.resize(); });
+  });
+
+  // Dropping past every card (on the grid's own background, e.g. empty
+  // space below the last row) appends to the end instead of being ignored.
+  els.grid.addEventListener("dragover", function(e){
+    if (draggingCard) e.preventDefault();
+  });
+  els.grid.addEventListener("drop", function(e){
+    if (draggingCard && e.target === els.grid){
+      e.preventDefault();
+      els.grid.appendChild(draggingCard);
+      clearDropIndicators();
+      resizeChartsSoon();
+      syncBoardOrderFromDom(); // M8: persist the new card order
+    }
+  });
+
+  // ---------------------------------------------------------------- M11: dashboard filter chip
+  // Shown next to the "Live dashboard" title whenever a natural-language
+  // filtered dashboard (the SSE "dashboard" event) is on screen; the ×
+  // clears it by re-fetching the unfiltered legacy dashboard (DESIGN.md
+  // "an --accent-soft chip with a clear-×").
+  function showDashFilterChip(label){
+    if (!els.dashFilterChip) return;
+    els.dashFilterChipText.textContent = label || t("dashFilterAll");
+    els.dashFilterChip.hidden = false;
+  }
+  function hideDashFilterChip(){
+    if (els.dashFilterChip) els.dashFilterChip.hidden = true;
+  }
+  function renderFilteredDashboard(cards, filterLabel, requestStart){
+    renderDashboardGrid(cards, requestStart);
+    showDashFilterChip(filterLabel);
+  }
+  if (els.dashFilterChipClear){
+    els.dashFilterChipClear.addEventListener("click", function(){
+      hideDashFilterChip();
+      buildDashboard();
+    });
+  }
+
+  // ---------------------------------------------------------------- actions
+  function buildDashboard(){
+    els.buildBtn.disabled = true;
+    setThinking(true);
+    showTyping(t("buildingDash"));
+    var requestStart = Date.now();
+    apiPost("/api/dashboard", {})
+      .then(function(cards){
+        hideTyping();
+        hideDashFilterChip(); // this is always the unfiltered, full-data dashboard
+        renderDashboardGrid(cards, requestStart);
+      })
+      .catch(function(err){
+        hideTyping();
+        showToast(err.message || t("errorGeneric"));
+      })
+      .finally(function(){
+        els.buildBtn.disabled = false;
+        setThinking(false);
+      });
+  }
+
+  function sendQuestion(question){
+    if (!question || !question.trim()) return;
+    var userMsgEl = addUserMessage(question);
+    els.input.value = "";
+    els.sendBtn.disabled = true;
+    setThinking(true); // DESIGN.md §5 "Thinking animation": submit -> answer/error
+    var startTs = Date.now(); // M8: answer-latency badge — question send time
+
+    // M11: a chat "build me a KPI dashboard for ..." message is no longer
+    // intercepted client-side — it goes through the normal agent stream
+    // like any other question, so the backend can extract filters (real
+    // LLM via the build_dashboard tool, or the deterministic keyword
+    // planner offline) and the SSE "dashboard" event renders the FILTERED
+    // grid + filter chip. The "Build top-12 KPI dashboard" button below
+    // keeps calling the unfiltered legacy endpoint directly.
+    streamAsk(question, userMsgEl, startTs);
+  }
+
+  // Renders the final answer bubble + optional chart card, shared by both
+  // the SSE path and the legacy POST /api/ask fallback path below. Also
+  // pins a "save as chip" button onto the matching user bubble (M7b) —
+  // done here, once an answer (success or error) actually exists.
+  function finishWithResult(result, question, userMsgEl){
+    setThinking(false);
+    addAgentMessage(result, false, question);
+    attachPinButton(userMsgEl, question);
+    if (result.mode === "dashboard" && result.cards){
+      // M11: the POST /api/ask fallback path (EventSource unavailable) —
+      // the SSE path already rendered the grid from its own "dashboard"
+      // event before this ever runs.
+      renderFilteredDashboard(result.cards, result.filter_label, null);
+    } else if (result.chart && result.rows && result.rows.length){
+      // M11 addendum: the same ideal-chart default applies to an ad-hoc
+      // chat answer's chart card. These cards are ephemeral (no board-state
+      // key — see the `card.dataset.cardKey` note in makeCard), so there is
+      // no persisted override to defer to here.
+      var idealAdhoc = pickIdealChart(result.rows, result.chart);
+      prependCard({
+        title: result.mode === "metric" ? (result.title || question) : question,
+        chart: idealAdhoc.chart,
+        rows: idealAdhoc.rows,
+        answer: result.answer,
+        consent_note: result.consent_note || "",
+        latencySecs: result.latencySecs
+      });
+    }
+  }
+
+  // Legacy single-shot path: POST /api/ask, no live trace. Used whenever
+  // EventSource itself fails (unsupported browser, a proxy that strips
+  // SSE, or the stream closing before an answer ever arrived).
+  function askViaPost(question, userMsgEl, startTs){
+    apiPost("/api/ask", {
+      question: question,
+      lang: LANG,
+      tier: currentTier,
+      session_id: SESSION_ID,
+      memory: memoryEnabled() ? "on" : "off"
+    })
+      .then(function(result){
+        if (typeof startTs === "number") result.latencySecs = (Date.now() - startTs) / 1000;
+        finishWithResult(result, question, userMsgEl);
+      })
+      .catch(function(err){
+        setThinking(false);
+        var msg = err.status === 429 ? t("errorRateLimit") : (err.message || t("errorGeneric"));
+        addAgentMessage({answer: msg}, true);
+        attachPinButton(userMsgEl, question);
+        showToast(msg);
+      })
+      .finally(function(){ els.sendBtn.disabled = false; });
+  }
+
+  // Primary path (M3a): GET /api/ask/stream via EventSource, rendering a
+  // live step-by-step trace inside a pending bubble as events arrive, then
+  // swapping it for the normal answer bubble once the "answer" event lands.
+  function streamAsk(question, userMsgEl, startTs){
+    var trace = createTraceBubble();
+    var settled = false;
+    var sawAnyEvent = false;
+    var answered = false;   // set the moment an "answer" event arrives —
+                            // guards against the SSE close racing finalize()
+    var es;
+
+    function cleanupTrace(){
+      if (trace.el.parentNode) trace.el.parentNode.removeChild(trace.el);
+    }
+
+    function finalize(result){
+      if (settled) return;
+      settled = true;
+      if (es) es.close();
+      collapseTrace(trace);
+      if (typeof startTs === "number") result.latencySecs = (Date.now() - startTs) / 1000;
+      finishWithResult(result, question, userMsgEl);
+      els.sendBtn.disabled = false;
+    }
+
+    function fallback(){
+      if (settled) return;
+      settled = true;
+      if (es) es.close();
+      cleanupTrace();
+      askViaPost(question, userMsgEl, startTs);
+    }
+
+    var url = "/api/ask/stream?q=" + encodeURIComponent(question) +
+      "&lang=" + encodeURIComponent(LANG) +
+      "&tier=" + encodeURIComponent(currentTier) +
+      "&session_id=" + encodeURIComponent(SESSION_ID) +
+      "&memory=" + encodeURIComponent(memoryEnabled() ? "on" : "off");
+    // M13: EventSource cannot set request headers, so the demo gate's key
+    // (when set) rides along as a `k` query param — the ONE endpoint that
+    // accepts this fallback server-side (see app.main._demo_gate_middleware
+    // and docs/api_contract.md); every other call uses the X-Demo-Key
+    // header via demoGateHeaders().
+    if (demoKey) url += "&k=" + encodeURIComponent(demoKey);
+    try {
+      es = new EventSource(url);
+    } catch (e) {
+      fallback();
+      return;
+    }
+
+    es.onmessage = function(ev){
+      sawAnyEvent = true;
+      var event;
+      try { event = JSON.parse(ev.data); } catch (e) { return; }
+
+      if (event.type === "answer"){
+        // Show a brief "Writing answer" step so the trace's last line
+        // matches what actually happened, then swap to the final bubble.
+        answered = true;
+        trace.addStep({icon: "check", label: t("traceLabelAnswer")});
+        setTimeout(function(){
+          finalize({
+            answer: event.answer,
+            sql: event.sql,
+            rows: event.rows,
+            chart: event.chart,
+            citations: event.citations || [],
+            mode: event.chart ? "metric" : undefined
+          });
+        }, 120);
+        return;
+      }
+      if (event.type === "dashboard"){
+        // M11: populate the live dashboard grid as soon as it is built —
+        // does not wait for the terminal "answer" (which only carries the
+        // headline paragraph, per the SSE contract).
+        renderFilteredDashboard(event.cards, event.filter_label, startTs);
+        // M11 addendum 2: fold each KPI's SQL into the trace too, so the
+        // full audit trail lives there as well as on the cards themselves.
+        var sqlList = (event.cards || [])
+          .filter(function(c){ return c && c.sql; })
+          .map(function(c){ return {title: c.title, sql: c.sql}; });
+        if (sqlList.length){
+          if (event.call_id){
+            // Agentic path: a build_dashboard tool_call step already
+            // exists for this call_id — attach the list onto it.
+            trace.attachSqlList(event.call_id, sqlList);
+          } else {
+            // Keyless/deterministic path: build_dashboard never goes
+            // through the tool-call loop, so there is no pre-existing
+            // step to attach onto — add one directly.
+            trace.addStep({icon: "chart", label: t("traceLabelDashboard"), sqlList: sqlList});
+          }
+        }
+        return;
+      }
+      renderTraceEvent(trace, event);
+    };
+
+    es.addEventListener("done", function(){
+      // Server closed the stream cleanly; stop EventSource's auto-reconnect
+      // so its close does not surface as onerror.
+      if (es) es.close();
+    });
+
+    es.onerror = function(){
+      if (settled || answered){
+        // The answer already arrived — the "error" is just the stream
+        // closing (or reconnect noise). Never re-ask via POST here.
+        if (es) es.close();
+        return;
+      }
+      // A genuine connection problem before any answer — including a
+      // proxy without SSE support — falls back to the legacy single-shot
+      // endpoint rather than leaving the user staring at a stalled trace.
+      fallback();
+    };
+  }
+
+  // ---------------------------------------------------------------- M8: data catalog drawer
+  // Our twist on Sofkar's flat table list: the medallion bronze/silver/gold
+  // tree, fetched once from GET /api/catalog and cached in JS (`catalogCache`)
+  // for the rest of the page's life — a language switch just re-renders the
+  // cached data with the new labels, no re-fetch.
+  var catalogCache = null;
+  var catalogOpen = false;
+
+  function renderCatalogBody(html){
+    if (els.catalogBody) els.catalogBody.innerHTML = html;
+  }
+
+  function renderCatalogPanel(){
+    if (!catalogCache || !catalogCache.layers){
+      renderCatalogBody('<div class="catalog-empty">' + escapeHtml(t("catalogLoadError")) + '</div>');
+      return;
+    }
+    var order = [
+      ["bronze", "catalogLayerBronze"],
+      ["silver", "catalogLayerSilver"],
+      ["gold", "catalogLayerGold"]
+    ];
+    // DESIGN.md §5 "Catalog drawer": layer header as a small tinted pill
+    // chip, every table its own boxed card (monospace name + COMMENT text
+    // below, when the /api/catalog payload has one).
+    var html = "";
+    order.forEach(function(pair){
+      var items = catalogCache.layers[pair[0]] || [];
+      html += '<div class="catalog-group"><span class="catalog-layer-chip catalog-layer-' + pair[0] + '">' +
+        escapeHtml(t(pair[1])) + '</span>';
+      if (!items.length){
+        html += '<div class="catalog-empty">' + escapeHtml(t("catalogEmptyLayer")) + '</div>';
+      } else {
+        html += '<div class="catalog-items">' + items.map(function(it){
+          var comment = it.comment
+            ? '<span class="catalog-item-comment">' + escapeHtml(it.comment) + '</span>'
+            : "";
+          return '<button type="button" class="catalog-item" data-name="' + escapeHtml(it.name) + '">' +
+            '<span class="catalog-item-name">' + escapeHtml(it.name) + '</span>' + comment + '</button>';
+        }).join("") + '</div>';
+      }
+      html += "</div>";
+    });
+    renderCatalogBody(html);
+    Array.prototype.forEach.call(els.catalogBody.querySelectorAll(".catalog-item"), function(btn){
+      btn.addEventListener("click", function(){
+        // Clicking an object inserts its qualified name into the chat
+        // input at the current cursor position (per the M8 spec).
+        insertAtCursor(els.input, btn.getAttribute("data-name"));
+      });
+    });
+  }
+
+  function openCatalogPanel(){
+    els.catalogPanel.hidden = false;
+    els.catalogBackdrop.hidden = false;
+    els.catalogPanel.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(function(){
+      els.catalogPanel.classList.add("open");
+      els.catalogBackdrop.classList.add("open");
+    });
+    if (catalogCache){
+      renderCatalogPanel();
+      return;
+    }
+    renderCatalogBody('<div class="catalog-empty">' + escapeHtml(t("catalogLoading")) + '</div>');
+    apiGet("/api/catalog")
+      .then(function(data){
+        catalogCache = data;
+        renderCatalogPanel();
+      })
+      .catch(function(){
+        renderCatalogBody('<div class="catalog-empty">' + escapeHtml(t("catalogLoadError")) + '</div>');
+      });
+  }
+
+  function closeCatalogPanel(){
+    els.catalogPanel.classList.remove("open");
+    els.catalogBackdrop.classList.remove("open");
+    els.catalogPanel.setAttribute("aria-hidden", "true");
+    // Wait out the slide-out transition before actually hiding (keeps the
+    // panel focusable/interactive during the close animation).
+    setTimeout(function(){
+      if (!els.catalogPanel.classList.contains("open")){
+        els.catalogPanel.hidden = true;
+        els.catalogBackdrop.hidden = true;
+      }
+    }, 200);
+  }
+
+  // ---------------------------------------------------------------- M10: chat<->dashboard splitter
+  // DESIGN.md §5 "Splitter": pointer-drag resize of the chat panel's width,
+  // clamped 320px-60vw, persisted in localStorage (fcSplit), double-click
+  // resets, hidden on the mobile stacked layout (handled purely by CSS —
+  // see the max-width:900px block — so no JS guard is needed here either).
+  var SPLIT_STORAGE_KEY = "fcSplit";
+  function loadSplitWidth(){
+    try {
+      var raw = window.localStorage.getItem(SPLIT_STORAGE_KEY);
+      var n = raw ? parseInt(raw, 10) : NaN;
+      if (!isNaN(n) && n > 0) return n;
+    } catch (e) { /* localStorage unavailable/denied — use the CSS default */ }
+    return null;
+  }
+  function saveSplitWidth(px){
+    try {
+      if (px === null) window.localStorage.removeItem(SPLIT_STORAGE_KEY);
+      else window.localStorage.setItem(SPLIT_STORAGE_KEY, String(Math.round(px)));
+    } catch (e) { /* ignore quota/denied */ }
+  }
+  function clampSplitWidth(px){
+    return Math.max(320, Math.min(window.innerWidth * 0.6, px));
+  }
+
+  function setupSplitter(){
+    var splitter = document.getElementById("splitter");
+    var layout = document.querySelector(".layout");
+    var chatPanel = document.querySelector(".chat-panel");
+    if (!splitter || !layout || !chatPanel) return;
+
+    function applyWidth(px){
+      if (px === null){
+        chatPanel.style.flex = "";
+        chatPanel.style.width = "";
+      } else {
+        chatPanel.style.flex = "0 0 " + px + "px";
+        chatPanel.style.width = px + "px";
+      }
+    }
+
+    var stored = loadSplitWidth();
+    if (stored !== null) applyWidth(clampSplitWidth(stored));
+
+    var dragging = false;
+    var pendingPx = null;
+    var rafScheduled = false;
+    function scheduleApply(){
+      if (rafScheduled) return;
+      rafScheduled = true;
+      requestAnimationFrame(function(){
+        rafScheduled = false;
+        if (pendingPx !== null) applyWidth(pendingPx);
+        resizeChartsSoon(); // throttled via this same rAF cadence while dragging
+      });
+    }
+    function onPointerMove(e){
+      if (!dragging) return;
+      var rect = layout.getBoundingClientRect();
+      pendingPx = clampSplitWidth(e.clientX - rect.left);
+      scheduleApply();
+    }
+    function onPointerUp(){
+      if (!dragging) return;
+      dragging = false;
+      splitter.classList.remove("dragging");
+      document.body.style.removeProperty("cursor");
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      if (pendingPx !== null) saveSplitWidth(pendingPx);
+      resizeChartsSoon();
+    }
+    splitter.addEventListener("pointerdown", function(e){
+      dragging = true;
+      pendingPx = null;
+      splitter.classList.add("dragging");
+      document.body.style.cursor = "col-resize";
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
+      e.preventDefault();
+    });
+    splitter.addEventListener("dblclick", function(){
+      applyWidth(null);
+      saveSplitWidth(null);
+      resizeChartsSoon();
+    });
+  }
+
+  // ---------------------------------------------------------------- M8: empty-state welcome
+  // Shown inside #messages until the first question is ever sent (see the
+  // `firstQuestionSent` guard in addUserMessage()); the chip row above it
+  // (#chips) is untouched — it stays exactly where it already was.
+  function renderWelcome(){
+    // M11: 7 default chips now (the KPI-dashboard suggestion added) — show
+    // every default rather than an out-of-date hardcoded 6.
+    var suggestions = currentChipList(LANG).slice(0, 7);
+    var html = '<div class="welcome-block" id="welcome-block">' +
+      '<div class="welcome-title">' + escapeHtml(t("welcomeTitle")) + "</div>" +
+      '<div class="welcome-subtitle">' + escapeHtml(t("welcomeSubtitle")) + "</div>" +
+      '<div class="welcome-suggestions">' +
+      suggestions.map(function(q){
+        return '<button type="button" class="welcome-card">' + escapeHtml(q) + "</button>";
+      }).join("") +
+      "</div></div>";
+    els.messages.innerHTML = html;
+    Array.prototype.forEach.call(els.messages.querySelectorAll(".welcome-card"), function(btn){
+      btn.addEventListener("click", function(){ sendQuestion(btn.textContent); });
+    });
+  }
+
+  // ---------------------------------------------------------------- i18n render
+  function renderChrome(){
+    document.querySelectorAll("[data-i18n]").forEach(function(el){
+      el.textContent = t(el.getAttribute("data-i18n"));
+    });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
+      el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
+    });
+    document.querySelectorAll("[data-i18n-aria-label]").forEach(function(el){
+      el.setAttribute("aria-label", t(el.getAttribute("data-i18n-aria-label")));
+    });
+    document.querySelectorAll("[data-i18n-title]").forEach(function(el){
+      el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
+    });
+    renderChips();
+    renderFooter();
+    updateThemeToggleUi();
+    // M8: the welcome block and the (already-open) catalog panel both
+    // re-render on a language switch, so their text follows LANG too.
+    if (!firstQuestionSent) renderWelcome();
+    if (catalogCache) renderCatalogPanel();
+  }
+
+  function renderFooter(){
+    var tierLabel = t("tier" + currentTier.charAt(0).toUpperCase() + currentTier.slice(1));
+    els.footer.textContent = t("footerTemplate")
+      .replace("{driver}", healthInfo.driver)
+      .replace("{llm}", healthInfo.llm)
+      .replace("{ts}", healthInfo.data_max_ts || "n/a")
+      + t("footerTierSuffix").replace("{tier}", tierLabel);
+    // M10: keep the connection indicator's dot state + tooltip in sync
+    // with tier/language changes too, without re-polling /health.
+    if (connState) updateConnIndicator(connState, healthInfo);
+  }
+
+  function setLang(lang){
+    LANG = lang;
+    els.btnEn.classList.toggle("active", lang === "en");
+    els.btnTr.classList.toggle("active", lang === "tr");
+    renderChrome();
+  }
+
+  // ---------------------------------------------------------------- wiring
+  els.btnEn.addEventListener("click", function(){ setLang("en"); });
+  els.btnTr.addEventListener("click", function(){ setLang("tr"); });
+  els.sendBtn.addEventListener("click", function(){ sendQuestion(els.input.value); });
+  els.input.addEventListener("keydown", function(e){
+    if (e.key === "Enter") sendQuestion(els.input.value);
+  });
+  els.buildBtn.addEventListener("click", buildDashboard);
+  [els.tierFast, els.tierBalanced, els.tierMax].forEach(function(btn){
+    if (!btn) return;
+    btn.addEventListener("click", function(){ setTier(btn.getAttribute("data-tier")); });
+  });
+  setTier(currentTier); // reflect the persisted (or default) tier's active state on load
+
+  // M8: "Reset layout" (dashboard order/closed/chart-type) + data catalog drawer
+  if (els.resetLayoutBtn) els.resetLayoutBtn.addEventListener("click", resetBoardLayout);
+  if (els.catalogToggleBtn){
+    els.catalogToggleBtn.addEventListener("click", function(){
+      catalogOpen = !catalogOpen;
+      if (catalogOpen) openCatalogPanel(); else closeCatalogPanel();
+    });
+  }
+  if (els.catalogCloseBtn){
+    els.catalogCloseBtn.addEventListener("click", function(){
+      catalogOpen = false;
+      closeCatalogPanel();
+    });
+  }
+  if (els.catalogBackdrop){
+    els.catalogBackdrop.addEventListener("click", function(){
+      catalogOpen = false;
+      closeCatalogPanel();
+    });
+  }
+
+  // ---------------------------------------------------------------- M10: theme toggle + splitter wiring
+  if (els.themeToggleBtn) els.themeToggleBtn.addEventListener("click", toggleTheme);
+  applyTheme();
+  // Refreshes the toggle's icon/aria-label when the OS-level preference
+  // changes and the user has never made an explicit choice — the tokens
+  // themselves already follow it automatically via the plain CSS media
+  // query, this just keeps the button's own state in sync.
+  try {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function(){
+      if (!explicitTheme) updateThemeToggleUi();
+    });
+  } catch (e) { /* matchMedia change listener unsupported — non-fatal */ }
+
+  setupSplitter();
+
+  pollHealth();
+  checkDemoGate();
+
+  renderChrome();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+M1 TEST REPORT — ask-the-funnel agent
+Generated: 2026-09-01 22:31 UTC
+
+================================ PYTEST ================================
+................................................                         [100%]
+48 passed in 1.93s
+
+================================ DEMO ==================================
+==============================================================================
+ASK-THE-FUNNEL DEMO — planner: KeywordLLM
+==============================================================================
+
+Q1. Show me the funnel by market
+    mode=metric  metric=funnel_overview
+    stage_order | stage | users
+    1 | hearing_test_start | 100000
+    2 | hearing_test_complete | 42062
+    3 | app_download | 23405
+    4 | hearing_aid_paired | 14599
+    5 | active_d30 | 7461
+    chart: funnel x=stage y=users
+    A: Funnel overview: users per stage. hearing_test_start: 100,000 -> hearing_test_complete: 42,062 -> app_download: 23,405 -> hearing_aid_paired: 14,599 -> active_d30: 7,461. Note: Web stages count pseudonymous web users; app stages count hashed app devices. The two id spaces overlap only for consented, signed-in users in id_bridge, so per-stage totals are honest per platform but cannot be chained into one cross-device user journey for everyone.
+
+Q2. Where is the biggest drop-off?
+    mode=metric  metric=step_conversion_rates
+    step | from_users | to_users | conversion_rate
+    hearing_test_start -> hearing_test_complete | 100000 | 42062 | 0.4206
+    hearing_test_complete -> app_download | 42062 | 23405 | 0.5564
+    app_download -> hearing_aid_paired | 23405 | 14599 | 0.6238
+    hearing_aid_paired -> active_d30 | 14599 | 7461 | 0.5111
+    chart: bar x=step y=conversion_rate
+    A: Step-to-step conversion rates. Highest conversion_rate: app_download -> hearing_aid_paired at 62.4%; lowest: hearing_test_start -> hearing_test_complete at 42.1% (4 groups). Note: The web->app step (complete -> download) mixes id spaces (web pseudo ids vs hashed app devices); the ratio is a population-level estimate, not a per-user join.
+
+Q3. Which channel completes the hearing test best?
+    mode=metric  metric=completion_rate_by_channel
+    channel | test_starts | test_completes | completion_rate
+    organic/none | 31,914.0 | 15,876.0 | 0.4975
+    brand_search | 9,957.0 | 4,613.0 | 0.4633
+    retargeting_meta | 7,900.0 | 3,237.0 | 0.4097
+    summer_hearing_meta | 32,186.0 | 8,030.0 | 0.2495
+    tiktok_awareness | 18,043.0 | 3,935.0 | 0.2181
+    chart: bar x=channel y=completion_rate
+    A: Hearing test completion rate by acquisition channel. Highest completion_rate: organic/none at 49.7%; lowest: tiktok_awareness at 21.8% (5 groups). Note: Channel is taken from utm_campaign on web events; sessions without a campaign are grouped as 'organic/none'. Web pseudonymous ids are used, so consent-denied users are still visible at this aggregated level.
+
+Q4. Compare pairing rate iOS vs Android by market
+    mode=metric  metric=pairing_rate_by_platform_market
+    market | platform | app_devices | paired_devices | pairing_rate
+    DE | Android | 1190 | 689 | 0.5790
+    DE | iOS | 773 | 502 | 0.6494
+    UK | Android | 841 | 506 | 0.6017
+    UK | iOS | 885 | 587 | 0.6633
+    US | Android | 1287 | 753 | 0.5851
+    US | iOS | 1887 | 1268 | 0.6720
+    chart: bar x=market y=pairing_rate series=platform
+    A: Pairing rate by platform and market. Highest pairing_rate: US / iOS at 67.2%; lowest: DE / Android at 57.9% (6 groups). Note: Market is only known through id_bridge (consented, signed-in users), so each platform x market cell reflects the linkable population, not every app device.
+
+Q5. Which channel has the best D30 retention?
+    mode=metric  metric=d30_retention_by_channel
+    acquisition_channel | eligible_users | retained_users | d30_retention_rate
+    organic_direct | 1951 | 1140 | 0.5843
+    paid_search_brand | 545 | 298 | 0.5468
+    paid_social_meta | 886 | 422 | 0.4763
+    retargeting_meta | 418 | 192 | 0.4593
+    paid_social_tiktok | 443 | 152 | 0.3431
+    chart: bar x=acquisition_channel y=d30_retention_rate
+    A: D30 retention by acquisition channel (bridge-linked). Highest d30_retention_rate: organic_direct at 58.4%; lowest: paid_social_tiktok at 34.3% (5 groups). Note: Bridge-linked users only (consented + signed-in); retention of non-linkable users is unobservable by design.
+
+Q6. How many users can we actually link across web and app?
+    mode=metric  metric=linkable_share_by_market
+    market | redirect_users | bridge_users | linkable_share
+    US | 8248 | 3174 | 0.3848
+    UK | 5947 | 1726 | 0.2902
+    DE | 9210 | 1963 | 0.2131
+    chart: bar x=market y=linkable_share
+    A: Linkable web-to-app share by market. Highest linkable_share: US at 38.5%; lowest: DE at 21.3% (3 groups). Note: Approximation, documented on purpose: true downloaders per market are unknowable (app events carry no market), so web app_store_redirect users per country stand in as the download denominator, and the numerator is consented+signed-in bridge users. Read this as "share of the funnel we can measure end-to-end", not as a precise link rate.
+
+Q7. Weekly trend of test starts
+    mode=metric  metric=weekly_test_starts_trend
+    week_start | test_starts
+    2026-06-01 00:00:00 | 6733
+    2026-06-08 00:00:00 | 7953
+    2026-06-15 00:00:00 | 7933
+    2026-06-22 00:00:00 | 7843
+    2026-06-29 00:00:00 | 7839
+    2026-07-06 00:00:00 | 7846
+    ... (13 rows total)
+    chart: line x=week_start y=test_starts
+    A: Weekly trend of hearing test starts. 13 periods, from 6733 (2026-06-01 00:00:00) to 6679 (2026-08-24 00:00:00) — trending down. Note: Web grain; weeks at the edges of the data window are partial.
+
+Q8. Which channel drives downloads vs actual pairings?
+    mode=metric  metric=pairing_rate_by_channel
+    acquisition_channel | linked_downloads | paired_users | pairing_rate
+    organic_direct | 3152 | 2,186.0 | 0.6935
+    paid_search_brand | 895 | 597.0 | 0.6670
+    retargeting_meta | 644 | 384.0 | 0.5963
+    paid_social_meta | 1452 | 843.0 | 0.5806
+    paid_social_tiktok | 720 | 295.0 | 0.4097
+    chart: bar x=acquisition_channel y=pairing_rate
+    A: Hearing aid pairing rate by acquisition channel (bridge-linked). Highest pairing_rate: organic_direct at 69.4%; lowest: paid_social_tiktok at 41.0% (5 groups). Note: Restricted to consented, signed-in users in id_bridge; channels whose users consent less often are under-represented.
+
+==============================================================================
+Registered KPIs:
+  - funnel_overview: Funnel overview: users per stage
+  - step_conversion_rates: Step-to-step conversion rates
+  - completion_rate_by_channel: Hearing test completion rate by acquisition channel
+  - completion_rate_by_device: Hearing test completion rate by device category
+  - downloads_by_channel: App downloads by acquisition channel (bridge-linked)
+  - pairing_rate_by_channel: Hearing aid pairing rate by acquisition channel (bridge-linked)
+  - pairing_rate_by_platform_market: Pairing rate by platform and market
+  - d30_retention_by_channel: D30 retention by acquisition channel (bridge-linked)
+  - weekly_test_starts_trend: Weekly trend of hearing test starts
+  - linkable_share_by_market: Linkable web-to-app share by market

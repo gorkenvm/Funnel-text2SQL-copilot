@@ -1,0 +1,186 @@
+M4a Test Report — Attribution KPIs + Hypothesis Cross-Tab
+=============================================================
+Date: 2026-09-02
+Scope: sql/medallion.sql, src/agent/medallion.py, src/agent/metrics.yaml,
+       src/agent/llm.py (KeywordLLM keyword table), src/agent/agentic.py
+       (system prompt), app/static/index.html (example chips, EN+TR),
+       tests/test_medallion.py, tests/test_metrics.py, tests/test_api.py,
+       tests/test_agent_e2e.py, tests/test_agentic.py, tests/test_guardrails.py.
+
+
+1. PYTEST SUMMARY
+------------------
+Command: python -m pytest -q
+Result:  185 passed, 0 failed  (was 168 green before M4a; net +17)
+
+Breakdown of the +17:
+  +11  tests/test_medallion.py — TestAttributionFirstVsLast (4 tests) and
+       TestCompletionByChannelDevice (4 tests), plus the two new gold marts
+       being swept into the existing GOLD_MARTS-parametrized
+       test_gold_mart_has_rows (+2) and TestApplyMedallion's fresh-DuckDB
+       loop (no new test count, same test body, now covers 12 marts)
+  + 1  tests/test_metrics.py::test_metric_sql_executes_and_returns_rows
+       parametrization gains attribution_first_vs_last and
+       completion_by_channel_device (+2 parametrized cases; net effect on
+       the file's test count captured below)
+  + 1  tests/test_guardrails.py::TestAcceptance::
+       test_accepts_the_new_m4a_qualified_gold_names (2 parametrized cases)
+  + 3  tests/test_agentic.py::TestSystemPromptQualityRules (bridge-join
+       selection-bias rule, layer-qualified-names rule, CTE-over-subquery
+       rule — string assertions against the live system prompt)
+
+Renamed (same assertion, corrected count, not a new test):
+  - tests/test_metrics.py::test_registry_has_ten_metrics ->
+    test_registry_has_twelve_metrics (10 -> 12)
+  - tests/test_api.py::test_metrics_returns_ten -> test_metrics_returns_twelve
+  - tests/test_api.py::test_dashboard_returns_ten_cards_with_rows ->
+    test_dashboard_returns_twelve_cards_with_rows
+  - tests/test_agent_e2e.py::test_list_metrics (10 -> 12, name unchanged)
+
+Condensed run:
+........................................................................ [ 38%]
+........................................................................ [ 77%]
+.........................................                                [100%]
+185 passed in ~12s
+
+
+2. NEW GOLD MARTS (DuckDB, in-memory, built by apply_medallion)
+------------------------------------------------------------------
+gold.attribution_first_vs_last — grain: channel x attribution_model, 10 rows
+(5 channels x 2 models). Population: silver.linked_journeys (the linkable
+downloader population — consented, signed-in, bridge-linked, temporally
+ordered web-complete-then-app-open). Each downloader is attributed TWICE:
+once to acquisition_channel (CRM first-touch) and once to last_touch_campaign
+mapped to the same channel vocabulary (last-touch).
+
+  channel              attribution_model  attributed_downloads
+  organic_direct       first_touch        3152
+  organic_direct       last_touch         3152
+  paid_search_brand    first_touch         895
+  paid_search_brand    last_touch          895
+  paid_social_meta     first_touch        1452
+  paid_social_meta     last_touch         1452
+  paid_social_tiktok   first_touch         720
+  paid_social_tiktok   last_touch          720
+  retargeting_meta     first_touch         644
+  retargeting_meta     last_touch          644
+
+gold.completion_by_channel_device — grain: channel x device_category, 15
+rows (5 channels x 3 devices). Population: silver.web_user_stages, ALL web
+users who started the test (no bridge/consent restriction) — deliberately
+NOT the linkable-only population above.
+
+  channel              device_category  users_started  users_completed  completion_rate
+  organic_direct        desktop          12755    7471   0.5857
+  organic_direct        mobile           17476    7620   0.4360
+  organic_direct        tablet            1683     785   0.4664
+  paid_search_brand     desktop           3945    2199   0.5574
+  paid_search_brand     mobile            5506    2181   0.3961
+  paid_search_brand     tablet             506     233   0.4605
+  paid_social_meta      desktop           5049    1852   0.3668
+  paid_social_meta      mobile           26423    5994   0.2268
+  paid_social_meta      tablet             714     184   0.2577
+  paid_social_tiktok    desktop           2865     967   0.3375
+  paid_social_tiktok    mobile           14790    2880   0.1947
+  paid_social_tiktok    tablet             388      88   0.2268
+  retargeting_meta      desktop           3141    1543   0.4912
+  retargeting_meta      mobile            4320    1504   0.3481
+  retargeting_meta      tablet             439     190   0.4328
+
+Total gold objects after M4a: 12 (was 10) + 3 bronze + 4 silver, all with a
+COMMENT ON stating purpose/grain/caveat.
+
+
+3. INVARIANT AND CROSS-TAB CHECKS
+------------------------------------
+a. Attribution-model equality invariant (the property this mart exists to
+   guarantee): SUM(attributed_downloads) GROUP BY attribution_model must be
+   identical across 'first_touch' and 'last_touch', because the same
+   linkable population (6,863 rows minus non-completers/non-linkable, see
+   silver.linked_journeys) is counted twice. Verified in
+   tests/test_medallion.py::TestAttributionFirstVsLast — both models total
+   6,863 rows' worth of downloaders and additionally match
+   COUNT(*) FROM silver.linked_journeys exactly.
+
+b. Cross-tab completeness: gold.completion_by_channel_device's row count
+   equals COUNT(*) of the distinct (channel, device_category) pairs
+   actually present — no duplicate or missing grid cells. All
+   completion_rate values verified in [0, 1] and users_completed <=
+   users_started for every row (tests/test_medallion.py::
+   TestCompletionByChannelDevice).
+
+c. Planted H1/H2 confound, read off the mart (no hard-coded literals):
+   WITHIN channel = 'paid_social_meta', desktop completion_rate (0.3668)
+   > mobile completion_rate (0.2268) — asserted as df["desktop"] >
+   df["mobile"] pulled live from the mart, holding for every channel in
+   the table above, not just paid_social_meta.
+
+
+4. THE DIFFERENT-STORIES FINDING
+------------------------------------
+Do first-touch and last-touch actually tell different stories in this
+data? NO — in this synthetic dataset they are IDENTICAL, channel by
+channel, not just in grand total: every one of the 6,863
+silver.linked_journeys rows has acquisition_channel exactly equal to its
+last-touch-mapped channel (0 mismatches, checked directly against the
+silver layer). The biggest mover between the two models is 0 downloads /
+0.0 percentage points, for every channel — there is no channel whose
+share shifts at all.
+
+This is a property of how the data was generated (src/generate_data.py
+assigns each synthetic user exactly one channel for the whole
+session-generation process; nothing in the generator models a user
+switching campaigns between their first and their most recent web
+session), not evidence that first-touch/last-touch attribution is
+generally redundant — docs/knowledge/attribution.md's example (a
+paid-acquired user returning organically) describes a real phenomenon
+this particular dataset simply never instantiates. The mart and KPI are
+still correct and still worth shipping: they report what the data
+actually shows (perfect agreement here) rather than assuming disagreement
+that isn't present, and they will correctly surface a split the moment a
+real dataset has one.
+
+
+5. DEVIATIONS FROM THE TASK'S LITERAL WORDING
+------------------------------------------------
+- completion_by_channel_device's "channel" column is the utm_campaign ->
+  channel NAME mapping given in the task (summer_hearing_meta ->
+  paid_social_meta, etc.), not the raw utm_campaign string that the
+  pre-existing gold.completion_by_channel mart uses. This was chosen so
+  "channel" means the same thing (the same 5-value vocabulary) in both new
+  M4a marts and is directly comparable to gold.attribution_first_vs_last's
+  channel column; the pre-existing gold.completion_by_channel mart is left
+  untouched (still keyed by raw last_touch_campaign) since changing it was
+  out of scope and would have broken its KPI-equivalence oracle test.
+- Beyond the 7 numbered build steps, three small pre-existing "10 KPI"
+  mentions were corrected to 12 for consistency, since they would
+  otherwise be immediately, visibly wrong once this mart lands:
+  docs/api_contract.md's /api/metrics and /api/dashboard descriptions, and
+  app/static/index.html's "Build top-10 KPI dashboard" button label
+  (EN+TR). No test depended on the old "10"/"top-10" wording; this is a
+  documentation/label correction only, not a behavior change.
+- Per the task's "keep the strongest four" instruction, the two chips
+  removed were "Which channel completes the hearing test best?" (now
+  subsumed by the new, more informative channel x device cross-tab chip)
+  and "Weekly trend of test starts" (a plain trend, least connected to the
+  hypothesis-testing theme the other five chips share).
+
+
+6. USER-SIDE STEPS
+----------------------
+1. Re-run `python scripts/load_to_databricks.py` (unchanged prerequisites,
+   docs/deploy_guide.md section 5) so the two new gold marts are created on
+   Databricks; its existing "Gold layer verification" block iterates
+   agent.medallion.GOLD_TABLES, so it will automatically pick up
+   gold.attribution_first_vs_last and gold.completion_by_channel_device
+   and print their Databricks row counts without any script changes.
+2. Spot-check the new marts' constructs against a live Databricks SQL
+   warehouse: both use only CASE/WHEN, GROUP BY, UNION ALL and NULLIF —
+   all already exercised by the pre-M4a medallion SQL — so no new dialect
+   risk is introduced beyond what reports/m3c_test_report.txt section 4
+   already flagged as unverified in this sandbox.
+3. Nothing else requires action — the two new KPIs, their chart specs, the
+   KeywordLLM keyword entries, the two new demo chips, and the three
+   system-prompt quality rules are all live locally the next time the app
+   or test suite runs (AGENT_DB=duckdb default already rebuilds the full
+   medallion, including the two new marts, on every startup).

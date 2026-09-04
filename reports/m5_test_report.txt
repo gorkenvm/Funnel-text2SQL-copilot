@@ -1,0 +1,301 @@
+================================================================================
+M5 TEST REPORT — Sentinel: Anomaly & Schema-Drift Watchdog (PDF task 5.5)
+================================================================================
+
+1. SCOPE
+--------
+Built the sentinel end to end: 3 versioned SQL checks (sql/sentinel/),
+the expected-state registry (config/sentinel_registry.json, generated from
+the actual current data), the shared pure-Python detection core
+(src/agent/sentinel_core.py), the CLI/Job entry point (scripts/sentinel.py),
+the Databricks Job notebook (notebooks/sentinel_job.ipynb), the design doc
+(docs/sentinel_design.md) + Turkish deploy_guide.md §7, and
+tests/test_sentinel.py. Everything runs read-only, offline, and
+deterministically (no OpenAI/Databricks network in this sandbox).
+
+2. PYTEST SUMMARY
+-----------------
+Command: python -m pytest -q
+Before M5: 189 passed, 0 failed
+After M5:  214 passed, 0 failed  (net +25: tests/test_sentinel.py)
+
+Condensed run:
+........................................................................ [ 33%]
+........................................................................ [ 67%]
+......................................................................   [100%]
+214 passed in ~16s
+
+tests/test_sentinel.py, verbose (all 25 green):
+  TestHealthyRun::test_default_as_of_has_no_critical_findings              PASSED
+  TestHealthyRun::test_default_as_of_has_no_schema_drift                   PASSED
+  TestHealthyRun::test_maturity_buffer_is_documented_and_positive          PASSED
+  TestHealthyRun::test_scoring_the_raw_max_event_date_is_intentionally_unsafe  PASSED
+  TestTamperedVolumeAndRateDrop::test_deleting_most_of_a_days_pairings_is_flagged_critical  PASSED
+  TestTamperedSchemaDrift::test_rogue_event_name_and_new_app_version_are_flagged  PASSED
+  TestTamperedMissingEventToday::test_expected_event_with_zero_rows_today_is_flagged_critical  PASSED
+  TestBandMath::test_severity_tiers_at_exact_boundaries                    PASSED
+  TestBandMath::test_just_under_info_threshold_is_no_finding               PASSED
+  TestBandMath::test_undefined_deviation_is_no_finding                     PASSED
+  TestBandMath::test_min_volume_floor_suppresses_a_tiny_noisy_series       PASSED
+  TestBandMath::test_min_history_guard_suppresses_a_too_young_series       PASSED
+  TestBandMath::test_evaluate_volume_findings_on_a_hand_built_series       PASSED
+  TestBandMath::test_worst_severity_and_exit_code_mapping                  PASSED
+  TestNarration::test_clean_run_template_summary_is_short_and_says_no_action  PASSED
+  TestNarration::test_findings_template_summary_uses_only_given_numbers    PASSED
+  TestNarration::test_narrate_without_llm_falls_back_to_template           PASSED
+  TestNarration::test_narrate_with_keyword_llm_falls_back_to_template      PASSED
+  TestNarration::test_narrate_never_raises_when_chat_step_errors           PASSED
+  TestNarration::test_narrate_uses_a_real_chat_step_reply_verbatim         PASSED
+  TestCLI::test_healthy_run_writes_draft_report_and_exits_clean            PASSED
+  TestCLI::test_json_format_prints_valid_json_with_draft_flag              PASSED
+  TestCLI::test_notify_prints_instead_of_sending                          PASSED
+  TestCLI::test_exit_code_reflects_worst_finding_severity                  PASSED
+  TestCLI::test_never_writes_to_bronze_silver_gold_or_raw_tables           PASSED
+
+No test hardcodes a calibrated funnel literal (the 42/55/61/78% reference
+funnel, or any generate_data.py-calibrated number) — every assertion is
+either hand-computed band-math on a synthetic series, or a before/after
+comparison on whatever the current data actually contains. Tampered
+fixtures are built on a FRESH in-memory DuckDB connection with real TABLE
+copies of the three parquet files (never views, so DELETE/INSERT works);
+data/ itself is never opened for writing.
+
+3. HEALTHY RUN — full report (reports/sentinel/sentinel_2026-08-24.md)
+------------------------------------------------------------------------
+Command: AGENT_LLM=keyword python scripts/sentinel.py
+Exit code: 0
+
+--------------------------------------------------------------------------------
+# Sentinel Report — 2026-08-24
+
+**DRAFT — pending analyst approval (human checkpoint)**
+
+## Executive Summary
+
+Sentinel run for 2026-08-24 found 5 finding(s): 5 info. Top info item(s):
+remote_support_session (app / iOS) on 2026-08-24: actual=27 is 1.67σ below
+the trailing 28-day band (33.8 ± 4.1); hearing_test_complete (web / US) on
+2026-08-24: actual=147 is 1.66σ below the trailing 28-day band (167.9 ±
+12.6); hearing_test_start (web / US) on 2026-08-24: actual=403 is 1.60σ
+below the trailing 28-day band (437.4 ± 21.5). Affected check(s):
+daily_event_volume. No critical findings; still pending analyst approval
+before distribution, per the human-checkpoint design.
+
+## Findings (5)
+
+### Critical (0)
+None.
+
+### Warning (0)
+None.
+
+### Info (5)
+- daily_event_volume  app:remote_support_session:iOS — actual=27 is 1.67σ
+  below the trailing 28-day band (33.8 ± 4.1).
+- daily_event_volume  web:hearing_test_complete:US — actual=147 is 1.66σ
+  below the trailing 28-day band (167.9 ± 12.6).
+- daily_event_volume  web:hearing_test_start:US — actual=403 is 1.60σ
+  below the trailing 28-day band (437.4 ± 21.5).
+- daily_event_volume  web:page_view:US — actual=362 is 1.67σ below the
+  trailing 28-day band (396.5 ± 20.7).
+- daily_event_volume  web:result_screen_view:US — actual=147 is 1.69σ
+  below the trailing 28-day band (167.9 ± 12.3).
+
+## Schema Snapshot
+- Columns inventoried: 21 across 3 table(s).
+- event_name values observed: app_open, app_store_redirect,
+  hearing_aid_paired, hearing_test_complete, hearing_test_start,
+  page_view, remote_support_session, result_screen_view.
+- app_version values observed: 6.2.1, 6.3.0, 6.3.1.
+
+## Run Metadata
+- as_of: 2026-08-24 | driver: DuckDBDriver | exit_code: 0
+- thresholds: band_multiplier_info=1.5, band_multiplier_warning=2.5,
+  band_multiplier_critical=4.0, min_volume_floor=5, min_history_days=14
+--------------------------------------------------------------------------------
+
+(Full file, byte-for-byte, at reports/sentinel/sentinel_2026-08-24.md — a
+handful of "info" findings is expected texture, not a bug: with
+band_multiplier_info at 1.5σ, roughly 1 in 7 series will drift past it on
+any given day by chance alone on perfectly healthy data. Zero WARNING and
+zero CRITICAL findings is the actual "no critical findings" acceptance bar.)
+
+4. TAMPERED RUN — the caught anomalies, verbatim
+   (reports/sentinel/sentinel_2026-08-24_tampered_demo.md)
+--------------------------------------------------------------------------
+This report combines all three PDF-required tampered scenarios into one
+in-memory run (built fresh from the real parquet, data/ never touched;
+same as-of day, 2026-08-24) to show every detection path firing together:
+
+  (a) deleted 45/75 (60%) of the as-of day's Android hearing_aid_paired
+      app events
+  (b) inserted 1 rogue 'device_paired' event_name with a brand-new
+      app_version '7.0.0-beta'
+  (c) deleted ALL remaining remote_support_session rows on the as-of day
+      (an expected event with zero rows on the as-of day)
+
+Result: 9 findings, exit_code 2.
+
+CAUGHT ANOMALY LINES (verbatim from the report):
+
+  Critical (3):
+  - `daily_event_volume` **app:hearing_aid_paired:Android** — hearing_aid_paired
+    (app / Android) on 2026-08-24: actual=30 is 6.21σ below the trailing
+    28-day band (77.9 ± 7.7).
+  - `daily_funnel_rate` **rate:download_to_pair** — download_to_pair rate on
+    2026-08-24: actual=14.0% (109/778) is 4.80σ below the trailing 28-day
+    band (21.6% ± 1.6%).
+  - `missing_event_today` **missing_today:app_events.remote_support_session** —
+    Expected event 'remote_support_session' has ZERO recorded rows in
+    app_events on 2026-08-24 (registry expects it daily).
+
+  Warning (2):
+  - `schema_app_versions` **app_version:7.0.0-beta** — New app_version
+    '7.0.0-beta' observed in app_events, not in the registry.
+  - `schema_event_names` **event_name:app_events.device_paired** — New
+    event_name 'device_paired' observed in app_events, not in the registry.
+
+  Info (4): the same 4 web-side info-level findings as the healthy run
+  (page_view/hearing_test_start/hearing_test_complete/result_screen_view
+  on the US market) — unaffected by the tampering, present in both runs,
+  which is itself a useful sanity check that the tamper was scoped to
+  app_events only.
+
+Each of the 3 PDF-required scenarios is caught by a DIFFERENT, purpose-
+built detection path (isolated individually in
+tests/test_sentinel.py::TestTampered*, and shown together here):
+  (a) -> daily_event_volume (SQL trailing-band z-score) AND
+         daily_funnel_rate (download_to_pair conversion collapses too)
+  (b) -> schema_event_names + schema_app_versions (registry diff)
+  (c) -> missing_event_today (a NEW, deliberately non-SQL check — see
+         section 6 for why the band SQL structurally cannot catch this
+         one on its own)
+
+5. BAND MATH — hand-computed boundary checks (TestBandMath)
+-------------------------------------------------------------
+sentinel_core._band_severity(deviation_z, volume_signal, history_days,
+thresholds) is exercised directly, with hand-picked inputs, independent of
+any driver or real data:
+  - exact boundaries: |z|=1.5 -> info, |z|=2.5 -> warning, |z|=4.0 ->
+    critical (both signs)
+  - |z|=1.49 -> no finding (just under the info floor)
+  - z=None / z=NaN -> no finding (undefined band, e.g. zero spread)
+  - volume_signal one below min_volume_floor -> suppressed even at z=10;
+    at the floor -> not suppressed (alert-fatigue guard, PDF requirement)
+  - history_days one below min_history_days -> suppressed even at z=10;
+    at the minimum -> not suppressed
+evaluate_volume_findings() is also exercised on a 2-row hand-built
+DataFrame (a manufactured -6.0σ series and a +0.1σ series) and correctly
+returns exactly one Finding, for the -6.0σ row, severity critical.
+
+6. DESIGN DECISION WORTH FLAGGING: default as-of is NOT the literal max
+   event date
+------------------------------------------------------------------------
+The PDF/spec phrasing was "as-of = max date" for the healthy-run
+acceptance test. Empirically, this dataset's literal maximum event date
+(2026-08-30) is a partial/immature day by construction of the closed,
+finite generator window (the very last calendar day; several downstream
+event types such as app_open and app_store_redirect are also naturally
+lagged behind an earlier step in the same journey, and progressively
+under-observed in the ~6 days closest to the horizon) — scoring it
+directly manufactures large, spurious deviations across nearly every
+series (deviation_z as extreme as -23 on a perfectly healthy dataset).
+
+This mirrors a pattern the codebase already has:
+silver.app_user_stages.censored (sql/medallion.sql) right-censors D30
+retention near the data horizon for the same underlying reason. Sentinel
+applies the same idea at the day-volume level:
+agent.sentinel_core.default_as_of() returns MAX(event_date) minus
+EVENT_MATURITY_BUFFER_DAYS (6, chosen empirically — see the constant's
+docstring for the measurements), and this buffered date is what "the
+sentinel's default as-of" means throughout this deliverable, including
+the healthy-run acceptance test.
+
+This was not silently smoothed over: tests/test_sentinel.py has
+TestHealthyRun::test_scoring_the_raw_max_event_date_is_intentionally_unsafe,
+which deliberately scores the literal raw max date and asserts it DOES
+trip a critical finding — proving the buffer is an examined, deliberate
+choice, not a threshold tuned to hide a bug. `--as-of` always lets a human
+override the default and score any day, including an immature one.
+
+7. OTHER DEVIATIONS / NOTES
+----------------------------
+- Registry (config/sentinel_registry.json) was generated once from the
+  current DuckDB data via agent.sentinel_core.build_registry() — not
+  hand-typed. Its "thresholds" block (band multipliers, min_volume_floor,
+  min_history_days) are the one part of the registry that IS a judgment
+  call rather than derived from data; documented and justified in
+  docs/sentinel_design.md's "False-positive management" section.
+- daily_event_volumes.sql's "segment" column is market (web_events.country)
+  for web-sourced rows and platform (app_events.platform) for app-sourced
+  rows, because app_events carries no market/geo field at the event grain
+  — documented in the SQL file's header rather than silently conflating
+  the two meanings.
+- daily_funnel_rates.sql's three step rates are same-day ACTIVITY ratios
+  (today's "to" count over today's "from" count), not the cohort/
+  first-occurrence conversion rate gold.step_conversion computes — a fast,
+  cheap day-over-day drift signal, explicitly not a KPI of record.
+  Documented in the file's own header, same spirit as sql/medallion.sql's
+  mart-level caveats.
+- notebooks/sentinel_job.ipynb tries a real `from agent import
+  sentinel_core as sc` first (works when the repo is checked out as a
+  Databricks Repo, the normal case for a Job notebook task living in this
+  repo) and falls back to a mirrored subset of the same module, clearly
+  labeled, if that import fails. BOTH paths were executed and verified
+  outside Databricks in this sandbox (dbutils/spark faked over the same
+  local DuckDB data) and produced byte-identical findings to
+  scripts/sentinel.py's own run — see WHAT CANNOT BE VERIFIED below for
+  what this substitute cannot prove.
+
+8. WHAT CAN ONLY BE VERIFIED ON THE USER'S DATABRICKS
+--------------------------------------------------------
+This sandbox has no Databricks network access (same constraint every
+prior module's report has noted for sql/medallion.sql). sql/sentinel/*.sql
+mirrors medallion.sql's already-adopted, Databricks-safe construct set
+(AVG/STDDEV window functions with an explicit frame, named WINDOW clauses,
+FULL OUTER JOIN, information_schema.columns, current_catalog()/
+current_schema()) but has been exercised here only against DuckDB. Once
+the loader/notebook are run for real:
+  - Confirm the three sql/sentinel/*.sql queries execute unmodified via
+    spark.sql() against the Unity Catalog tables scripts/load_to_databricks.py
+    created (this is the one genuinely untested dialect risk — window
+    frames and named WINDOW clauses are standard ANSI SQL Spark supports,
+    but only a real run proves it end to end on this warehouse).
+  - Regenerate config/sentinel_registry.json from the Databricks
+    connection (agent.sentinel_core.build_registry(get_driver("databricks")))
+    and expect exactly one, harmless "type changed" WARNING the first time
+    (event_timestamp/linked_at: DuckDB reports TIMESTAMP_NS, Databricks
+    reports TIMESTAMP) — documented in docs/sentinel_design.md's last
+    section so it isn't mistaken for a real drift the first time it's seen.
+  - Confirm notebooks/sentinel_job.ipynb's real import path actually
+    activates (i.e. the repo is genuinely checked out as a Databricks Repo
+    at the path the `repo_root` widget expects) rather than silently
+    falling into its mirrored fallback cell every run.
+  - Confirm the /Volumes/<catalog>/<schema>/raw/sentinel/ write succeeds
+    with the Job's actual identity/permissions (docs/deploy_guide.md §7.4
+    lists the exact grants needed).
+  - Create the actual Databricks Workflows Job (Workflows → Create Job →
+    notebook task → daily 06:00 schedule) — docs/deploy_guide.md §7 has the
+    full Turkish step-by-step; this is a console action only the user can
+    perform on their own workspace.
+
+9. FILES
+--------
+New:
+  sql/sentinel/daily_event_volumes.sql
+  sql/sentinel/daily_funnel_rates.sql
+  sql/sentinel/schema_snapshot.sql
+  config/sentinel_registry.json
+  src/agent/sentinel_core.py
+  scripts/sentinel.py
+  notebooks/sentinel_job.ipynb
+  docs/sentinel_design.md
+  tests/test_sentinel.py
+  reports/sentinel/sentinel_2026-08-24.md            (healthy run)
+  reports/sentinel/sentinel_2026-08-24_tampered_demo.md  (combined tampered run)
+  reports/m5_test_report.txt                          (this file)
+Modified:
+  docs/deploy_guide.md  (added Turkish §7: Databricks Job creation for the sentinel)
+
+Untouched (per RULES): data/, src/generate_data.py, app/, src/agent/metrics.yaml,
+sql/medallion.sql.

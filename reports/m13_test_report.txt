@@ -1,0 +1,164 @@
+===============================================================================
+M13: LIGHTWEIGHT SERVER-SIDE DEMO GATE
+===============================================================================
+User-approved. The chosen real passphrase lives ONLY in the operator's
+gitignored .env — it never appears in this repo (code/config/tests/docs);
+this report and every test use a TEST-ONLY phrase ("open sesame demo").
+
+DESIGN
+-------------------------------------------------------------------------
+Off by default (no DEMO_PASSPHRASE set): every endpoint, every test,
+today's behavior — byte for byte, verified by re-running the whole
+pre-M13 suite unchanged.
+
+When DEMO_PASSPHRASE is set, app.main._demo_gate_middleware (ASGI
+middleware, registered once, small and readable) gates every /api/*
+route (ask, ask/stream, metrics, dashboard, catalog):
+
+- Reads DEMO_PASSPHRASE fresh from os.environ on every request (never
+  cached at import time) -- this is what lets tests turn the gate on/off
+  purely via monkeypatch.setenv, with zero effect on any other test file.
+- Compares X-Demo-Key (or, for GET /api/ask/stream only, a `k` query
+  param -- EventSource cannot set headers) against the passphrase after
+  normalizing BOTH sides identically: trim -> collapse internal
+  whitespace runs to one space -> casefold. Compared with
+  hmac.compare_digest on the normalized UTF-8 bytes (constant-time).
+- A missing/wrong key returns a STATIC 401 body,
+  {"error": "locked", "message": "This is a private demo. Enter the
+  passphrase on the page to continue."} -- and because this happens in
+  middleware, BEFORE routing picks an endpoint function, the agent,
+  driver and LLM are never touched, and /api/ask/stream never starts its
+  SSE body (a clean JSON 401, not a stream).
+- _DemoGateLimiter: a plain per-IP dict of failure counts + lockout
+  timestamps (no new dependency). 5 consecutive failures from one IP
+  locks that IP out for 60 seconds -- every request during the lockout
+  (right key included) gets 429 with a bilingual retry message. A
+  success resets the counter. Resets on process restart -- an explicit,
+  accepted tradeoff for a demo gate, not a real rate-limit store.
+- GET /health stays open (never gated) and gained "locked": true/false
+  -- true only when DEMO_PASSPHRASE is set, never the passphrase itself.
+  This is how the frontend knows to show the lock screen before it has
+  any key to try. Static files (the page itself) stay open too.
+
+FRONTEND (app/static/index.html)
+-------------------------------------------------------------------------
+- New full-page overlay (#demo-lock-overlay, hidden by default): a
+  --surface card floating on --surface-alt, the existing sound-bars
+  brand mark (eqBarsSvg, reused verbatim), "Private demo"/"Özel demo"
+  title (Fraunces), one masked password input + one lime "Enter" button
+  (DESIGN.md "Button primary"), and the exact disclaimer-footer text
+  reused inside the card. No hint text anywhere about the passphrase.
+- checkDemoGate() runs once at bootstrap (alongside the existing
+  pollHealth()): GET /health decides whether to show the overlay at all;
+  a key already sitting in sessionStorage from earlier in the tab is
+  silently re-validated against GET /api/metrics before trusting it (a
+  stale/rotated passphrase re-shows the lock screen rather than silently
+  breaking every later call).
+- Submitting the form sends the RAW input as X-Demo-Key straight to
+  GET /api/metrics -- normalization is entirely the server's job, the
+  frontend never touches the phrase's casing/whitespace. On success the
+  key is stored in sessionStorage (try/catch) and the overlay hides; on
+  401 a calm inline --danger message appears ("Incorrect passphrase." /
+  "Parola hatalı.") with the input cleared and refocused (no shake); on
+  429 the server's own bilingual retry message is shown verbatim.
+- Once unlocked, demoGateHeaders() attaches X-Demo-Key to every apiPost/
+  apiGet call (the single choke point both already funnel through), and
+  streamAsk()'s EventSource URL gets `&k=<key>` appended -- the one
+  documented query-param fallback, used ONLY for /api/ask/stream.
+  Everything else behaves exactly as before M13.
+- 3 new i18n keys pairs (EN+TR): demoLockTitle/Subtitle/Placeholder/
+  Enter/Wrong/Retry. No new hues -- --surface/--surface-alt/--ink/
+  --ink-muted/--accent/--action/--action-ink/--danger, all pre-existing
+  tokens, both themes. Focus rings come for free from the existing
+  global `:focus-visible` rule (input/button are already covered).
+  Autofocus: showDemoLock() calls .focus() on the input.
+
+TESTS ADDED (tests/test_demo_gate.py, 21 new -- gate off is proven by the
+whole rest of the suite running completely unmodified)
+-------------------------------------------------------------------------
+- TestGateOffIsUnchangedBehavior: no header needed when unset; /health
+  reports locked:false.
+- TestNormalizedKeyMatching: exact key passes; case-insensitive; extra/
+  collapsed whitespace still matches; wrong/missing key rejected.
+- TestStatic401Shape: exact static body on wrong AND missing key; every
+  one of the 5 gated endpoints returns 401 without a key; /health and
+  static root (/) stay open even while locked.
+- TestStreamEndpointNeverStartsOnAFailedKey: a failed key on
+  /api/ask/stream is a clean JSON 401 (content-type asserted NOT
+  text/event-stream); the `k` query-param fallback works there; the same
+  param is NOT honored on any other endpoint.
+- TestLlmDriverAgentNeverTouchedOnAFailedKey: Mocks on app.main.agent.ask/
+  app.main.driver.query/app.main.llm.plan all record ZERO calls after a
+  401 on /api/ask and /api/dashboard.
+- TestPerIpBruteForceDamping: 5 consecutive wrong keys lock the IP out
+  (429), including the correct key while locked out; a success resets
+  the failure counter so 4 wrong + 1 right + 4 more wrong never
+  auto-locks.
+- TestHealthLockFlag: locked:true when set, false when unset, and the
+  test passphrase never appears anywhere in the /health payload.
+
+Full suite: 433 passed (baseline 412 + 21), 0 failed.
+
+DOCS
+-------------------------------------------------------------------------
+- docs/deploy_guide.md: new short TR section 9 "Demo kapısı" -- how to
+  set DEMO_PASSPHRASE, exactly what it protects (cost/nuisance) and does
+  NOT protect (not real auth: no accounts/sessions, phrase sits in
+  sessionStorage), the brute-force damping and its restart caveat.
+- docs/api_contract.md: GET /health's "locked" field documented; new
+  "Demo gate (M13)" section (X-Demo-Key header, the `k` stream fallback,
+  the static 401/429 shapes); GET /api/ask/stream's param table gained
+  the `k` row.
+- README.md: one sentence in the deployment-notes paragraph mentioning
+  the optional DEMO_PASSPHRASE gate.
+- Verified (grep, case-insensitive) that the real passphrase string does
+  not appear anywhere in the repo -- only the env var NAME
+  (DEMO_PASSPHRASE) and the test-only phrase in tests/test_demo_gate.py.
+
+VALIDATION RUN
+-------------------------------------------------------------------------
+Server A: AGENT_LLM=keyword AGENT_DB=duckdb DEMO_PASSPHRASE="open sesame
+demo" uvicorn app.main:app --port 8128 -- GET /health returned
+"locked": true.
+
+reports/m13_lock_screen_light.png
+  Full-page overlay on load: sound-bars mark, "Private demo" title,
+  subtitle, passphrase input, lime "Enter" button, disclaimer footer.
+  Light theme.
+reports/m13_lock_screen_dark.png
+  Same state under prefers-color-scheme: dark (a separate browser
+  context, since the in-app theme toggle sits behind the overlay and is
+  correctly unreachable while locked) -- contrast confirmed.
+reports/m13_lock_screen_wrong_passphrase.png
+  After submitting a wrong phrase: calm inline "Incorrect passphrase."
+  in --danger, input cleared, no shake animation.
+reports/m13_unlocked_view.png
+  After submitting the correct test passphrase: overlay gone, normal
+  welcome view underneath, unaffected.
+reports/m13_unlocked_after_question.png
+  A real question asked post-unlock ("Where is the biggest drop-off?"):
+  full functionality confirmed working end to end (chart, "Show SQL"/
+  "Show data", and the M12 feedback row all present) with the gate on.
+
+Server B: same command WITHOUT DEMO_PASSPHRASE -- GET /health returned
+"locked": false.
+
+reports/m13_no_gate_when_env_unset.png
+  Page loads straight into the normal welcome view; no overlay appears
+  at any point -- confirms the gate is completely inert by default.
+
+FILES CHANGED
+-------------------------------------------------------------------------
+app/main.py                 _demo_gate_middleware, _DemoGateLimiter,
+                             _demo_passphrase/_normalize_demo_key/
+                             _demo_key_matches, /health "locked" field
+app/static/index.html       lock overlay markup + CSS, checkDemoGate/
+                             showDemoLock/hideDemoLock/setDemoLockError/
+                             validateStoredDemoKey, demoGateHeaders()
+                             wired into apiPost/apiGet and the SSE URL,
+                             6 new EN/TR i18n keys
+docs/deploy_guide.md         new TR section 9 "Demo kapısı"
+docs/api_contract.md         "locked" field, new "Demo gate (M13)"
+                             section, stream endpoint's `k` param
+README.md                   one-sentence mention in the deploy notes
+tests/test_demo_gate.py     new file, 21 tests

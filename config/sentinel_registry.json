@@ -1,0 +1,65 @@
+{
+  "generated_at": "2026-09-02T13:24:52.107351+00:00",
+  "as_of_reference": "2026-08-24",
+  "expected_schema": {
+    "app_events": {
+      "columns": {
+        "hashed_device_id": "VARCHAR",
+        "platform": "VARCHAR",
+        "event_name": "VARCHAR",
+        "event_timestamp": "TIMESTAMP_NS",
+        "app_version": "VARCHAR"
+      }
+    },
+    "id_bridge": {
+      "columns": {
+        "hashed_id": "VARCHAR",
+        "market": "VARCHAR",
+        "opt_in_flag": "BOOLEAN",
+        "acquisition_channel": "VARCHAR",
+        "web_pseudo_id": "VARCHAR",
+        "app_device_id": "VARCHAR",
+        "linked_at": "TIMESTAMP_NS"
+      }
+    },
+    "web_events": {
+      "columns": {
+        "user_pseudo_id": "VARCHAR",
+        "session_id": "VARCHAR",
+        "event_name": "VARCHAR",
+        "event_timestamp": "TIMESTAMP_NS",
+        "page_location": "VARCHAR",
+        "utm_campaign": "VARCHAR",
+        "device_category": "VARCHAR",
+        "country": "VARCHAR",
+        "consent_state": "VARCHAR"
+      }
+    }
+  },
+  "expected_event_names": {
+    "app_events": [
+      "app_open",
+      "hearing_aid_paired",
+      "remote_support_session"
+    ],
+    "web_events": [
+      "app_store_redirect",
+      "hearing_test_complete",
+      "hearing_test_start",
+      "page_view",
+      "result_screen_view"
+    ]
+  },
+  "expected_app_versions": [
+    "6.2.1",
+    "6.3.0",
+    "6.3.1"
+  ],
+  "thresholds": {
+    "band_multiplier_info": 1.5,
+    "band_multiplier_warning": 2.5,
+    "band_multiplier_critical": 4.0,
+    "min_volume_floor": 5,
+    "min_history_days": 14
+  }
+}

@@ -1,0 +1,118 @@
+M2 TEST REPORT — Phonak Funnel Copilot web app
+Generated: 2026-09-01 (session run)
+
+================================ PYTEST (full suite) ================================
+$ PYTHONPATH=src python3 -m pytest tests -q
+............................................................             [100%]
+60 passed in 3.00s
+
+Breakdown:
+  - 48 pre-existing M1 tests (test_agent_e2e.py, test_funnel_truth.py,
+    test_guardrails.py, test_metrics.py) — unchanged, still green.
+  - 12 new M2 tests (tests/test_api.py):
+      test_health_ok
+      test_ask_returns_rows_and_answer[Where is the biggest drop-off?]
+      test_ask_returns_rows_and_answer[Compare pairing rate iOS vs Android by market]
+      test_ask_returns_rows_and_answer[Which channel drives downloads vs actual pairings?]
+      test_ask_tr_lang_echoed_and_still_answers
+      test_ask_rejects_empty_question
+      test_metrics_returns_ten
+      test_dashboard_returns_ten_cards_with_rows
+      test_dashboard_with_subset_of_keys
+      test_dashboard_unknown_key_returns_json_error
+      test_rate_limiter_triggers_429_after_burst
+      test_unknown_api_route_returns_json_error
+
+================================ PROOF OF SERVE (live curl) ================================
+Server started with: PYTHONPATH=src uvicorn app.main:app --host 0.0.0.0 --port 8009
+(no ANTHROPIC_API_KEY set in this environment -> KeywordLLM planner, English-only narration)
+
+--- GET /health ---
+{"status":"ok","driver":"duckdb","llm":"keyword","data_max_ts":"2026-08-30T23:59:11.864380404"}
+
+--- GET / (index.html served) ---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+...
+<title>Phonak Funnel Copilot — synthetic data demo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
+...
+
+--- POST /api/ask {"question":"Where is the biggest drop-off?","lang":"en"} ---
+{
+  "question": "Where is the biggest drop-off?",
+  "mode": "metric",
+  "sql": "WITH web_start AS ( ... ) SELECT step, from_users, to_users, conversion_rate FROM (...) steps WHERE from_users IS NOT NULL ORDER BY stage_order",
+  "rows": [
+    {"step": "hearing_test_start -> hearing_test_complete", "from_users": 100000, "to_users": 42062, "conversion_rate": 0.42062},
+    {"step": "hearing_test_complete -> app_download", "from_users": 42062, "to_users": 23405, "conversion_rate": 0.5564404926061528},
+    {"step": "app_download -> hearing_aid_paired", "from_users": 23405, "to_users": 14599, "conversion_rate": 0.6237556077761162},
+    {"step": "hearing_aid_paired -> active_d30", "from_users": 14599, "to_users": 7461, "conversion_rate": 0.5110624015343517}
+  ],
+  "chart": {"type": "bar", "x": "step", "y": "conversion_rate"},
+  "answer": "Step-to-step conversion rates. Highest conversion_rate: app_download -> hearing_aid_paired at 62.4%; lowest: hearing_test_start -> hearing_test_complete at 42.1% (4 groups). Note: The web->app step ...",
+  "lang": "en"
+}
+
+--- POST /api/ask {"question":"Which channel has the best D30 retention?","lang":"tr"} ---
+"lang": "tr" echoed back; "answer" stays in English (KeywordLLM has no
+`translate` method, so FunnelAgent.ask() silently keeps the default English
+narrative) — matches the documented behaviour in docs/api_contract.md.
+
+--- GET /api/metrics ---
+count: 10
+first item:
+{
+  "key": "funnel_overview",
+  "title": "Funnel overview: users per stage",
+  "description": "Distinct users at each funnel stage: ...",
+  "consent_note": "Web stages count pseudonymous web users; ...",
+  "chart": {"type": "funnel", "x": "stage", "y": "users"}
+}
+
+--- POST /api/dashboard {} ---
+count: 10
+first item:
+{
+  "key": "funnel_overview",
+  "title": "Funnel overview: users per stage",
+  "consent_note": "Web stages count pseudonymous web users; ...",
+  "chart": {"type": "funnel", "x": "stage", "y": "users"},
+  "rows": [
+    {"stage_order": 1, "stage": "hearing_test_start", "users": 100000},
+    {"stage_order": 2, "stage": "hearing_test_complete", "users": 42062},
+    {"stage_order": 3, "stage": "app_download", "users": 23405},
+    {"stage_order": 4, "stage": "hearing_aid_paired", "users": 14599},
+    ...
+  ]
+}
+
+--- GET /api/nope (unknown route under /api) ---
+HTTP_STATUS:404
+{"error":"Not Found"}
+
+--- Rate limiter burst on POST /api/ask (limit: 20/min per IP) ---
+call 1..19 -> 200
+call 20 -> 429
+429 body: {"error":"Too many requests — please wait a moment and try again. / Çok fazla istek gönderildi — lütfen biraz bekleyip tekrar deneyin."}
+
+Server stopped after verification (pkill uvicorn).
+
+================================ NOTES ================================
+- All error paths returned clean JSON {"error": ...} with no stack traces
+  observed (404, 429, and validation 422 all verified).
+- rows in every response were valid JSON (pandas Timestamps ISO-formatted,
+  no NaN/Infinity literals) confirming the _json_safe() sanitizer works.
+- M1's 48 tests pass unmodified after the two small, backwards-compatible
+  additions (FunnelAgent.ask(..., narrate_language="en") and
+  AnthropicLLM.translate()) — see the FINAL MESSAGE for details.
+
+--- Manager review fixes (post-implementation) ---
+1. ECharts is now vendored at app/static/vendor/echarts.min.js (npm echarts@5.5.1)
+   with CDN fallback via onerror — the demo no longer depends on external CDN.
+2. Chart cards degrade to a compact HTML table if the chart library fails to load.
+3. Fixed 0-width canvas bug: ECharts was initialized on detached DOM nodes;
+   added resizeChartsSoon() (requestAnimationFrame resize) after card insertion.
+Re-verified: 60/60 tests pass; dashboard renders 10 charts (Playwright screenshot).

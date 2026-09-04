@@ -1,0 +1,236 @@
+M3c Test Report — Bronze/Silver/Gold Medallion Architecture
+=============================================================
+Date: 2026-09-02
+Scope: sql/medallion.sql, src/agent/medallion.py, src/agent/db.py,
+       src/agent/guardrails.py, src/agent/tools.py, src/agent/agentic.py,
+       src/agent/metrics.yaml, scripts/load_to_databricks.py,
+       notebooks/funnel_analysis.ipynb, docs/deploy_guide.md,
+       src/agent/README.md, tests/test_medallion.py,
+       tests/test_tools.py, tests/test_databricks_loader.py.
+
+
+1. PYTEST SUMMARY
+------------------
+Command: PYTHONPATH=src python -m pytest tests -q
+Result:  168 passed, 0 failed  (was 133 green before M3c; net +35)
+
+Breakdown of the +35:
+  +33  tests/test_medallion.py (new file — layer inventory, apply_medallion
+       applier behaviour, KPI equivalence)
+  + 1  tests/test_databricks_loader.py::test_row_count_mismatch_never_applies_medallion
+  + 1  tests/test_databricks_loader.py::test_medallion_failure_after_good_raw_load_returns_false
+
+Pre-existing tests updated for the new (intentional) behaviour, none
+deleted:
+  - tests/test_tools.py::TestGetSchema::test_shape — now asserts get_schema
+    surfaces agent.guardrails.ALLOWED_TABLES (legacy names + every
+    bronze/silver/gold object) instead of the old 3-table EXPOSED_TABLES.
+  - tests/test_databricks_loader.py::TestRunWithMockedConnection::
+    test_success_all_counts_match — extended (not narrowed) to also assert
+    the medallion.sql statements run (templated with {{raw}} = the load
+    schema) and a row-count verification query is issued per gold mart,
+    after the existing raw-table PUT/CTAS/COUNT assertions.
+  - tests/test_guardrails.py::TestAcceptance::test_accepts_every_registry_query
+    — unchanged code, now exercises the new gold-mart-reading metrics.yaml
+    SQL against the expanded ALLOWED_TABLES whitelist; still green with no
+    edits needed.
+
+Full raw pytest output saved alongside this report is reproducible via
+the command above; a condensed run:
+
+........................................................................ [ 42%]
+........................................................................ [ 85%]
+........................                                                 [100%]
+168 passed in ~10.7s
+
+
+2. LAYER OBJECT INVENTORY (DuckDB, in-memory, built by apply_medallion)
+------------------------------------------------------------------------
+BRONZE (verbatim copy of the raw tables — {{raw}} = "main" on DuckDB):
+  bronze.web_events            307,529 rows
+  bronze.app_events             80,156 rows
+  bronze.id_bridge                6,863 rows
+
+SILVER (user/device grain + the one cross-device governance gate):
+  silver.web_user_stages        106,371 rows   (= distinct user_pseudo_id in web_events)
+  silver.app_user_stages         23,405 rows   (= distinct hashed_device_id with an app_open)
+  silver.v_attribution_eligible   6,863 rows   (= bronze.id_bridge WHERE opt_in_flag = true;
+                                                  every bridge row is opt-in in this dataset,
+                                                  so this view is currently a pass-through —
+                                                  see its COMMENT ON in sql/medallion.sql)
+  silver.linked_journeys          6,863 rows   (every bridge-linked user in this synthetic
+                                                  dataset happens to satisfy the temporal-order
+                                                  rule first_open_ts > test_complete_ts, i.e.
+                                                  0 bridge rows are dropped by that join here —
+                                                  a property of the generated data, not a
+                                                  relaxation of the rule)
+
+GOLD (one mart per KPI in metrics.yaml, all derived from silver):
+  gold.funnel_overview              5 rows  (5 funnel stages)
+  gold.step_conversion               5 rows  (4 usable after WHERE from_users IS NOT NULL)
+  gold.completion_by_channel         5 rows  (5 acquisition channels)
+  gold.completion_by_device          3 rows  (desktop/mobile/tablet)
+  gold.downloads_by_channel          5 rows
+  gold.pairing_by_channel            5 rows
+  gold.pairing_by_platform_market    6 rows  (3 markets x 2 platforms)
+  gold.d30_by_channel                5 rows
+  gold.weekly_test_starts           13 rows  (13 calendar weeks in the dataset)
+  gold.linkable_share_by_market      3 rows  (DE/UK/US)
+
+Total objects created by sql/medallion.sql: 17 (3 bronze + 4 silver + 10 gold),
+each with a COMMENT ON stating its purpose, grain and caveat.
+
+apply_medallion() wall-clock time (fresh in-memory DuckDB, 390K raw rows):
+  ~0.5s for the medallion build alone; ~0.65s for full DuckDBDriver()
+  construction (raw parquet view registration + medallion) — well inside
+  the ~10s startup budget.
+
+
+3. KPI-EQUIVALENCE PROOF
+--------------------------
+Method: for each of the 4 KPIs the acceptance criteria named explicitly,
+tests/test_medallion.py::TestKpiEquivalence hard-codes the EXACT pre-M3c
+metrics.yaml SQL (heavy, reading straight off web_events/app_events/
+id_bridge) as an "oracle" string, runs it against the same DuckDB
+connection, and asserts pandas.testing.assert_frame_equal (all columns,
+all rows, in order) against the new gold-mart-backed SQL. No literal
+funnel numbers are hard-coded as assertions anywhere — the comparison is
+always old-SQL-result vs. new-SQL-result, computed at test time.
+
+  KPI                              Rows compared   Result
+  --------------------------------  --------------  ------
+  funnel_overview                   5               EXACT MATCH
+  completion_rate_by_channel        5               EXACT MATCH
+  pairing_rate_by_platform_market   6               EXACT MATCH
+  d30_retention_by_channel          5               EXACT MATCH
+
+The same "old SQL vs. new gold SQL" comparison was additionally run,
+during development, for all 10 KPIs (not just the 4 the acceptance
+criteria named) with the same result (exact match on every column and
+row) — see the git history of src/agent/metrics.yaml for the full set of
+pre-M3c queries these were diffed against:
+
+  funnel_overview                    5 rows   MATCH
+  step_conversion_rates              4 rows   MATCH
+  completion_rate_by_channel         5 rows   MATCH
+  completion_rate_by_device          3 rows   MATCH
+  downloads_by_channel               5 rows   MATCH
+  pairing_rate_by_channel            5 rows   MATCH
+  pairing_rate_by_platform_market    6 rows   MATCH
+  d30_retention_by_channel           5 rows   MATCH
+  weekly_test_starts_trend          13 rows   MATCH
+  linkable_share_by_market           3 rows   MATCH
+
+tests/test_metrics.py (unchanged, all 10 KPIs, executes-and-returns-rows +
+rate-is-a-fraction checks) and tests/test_funnel_truth.py (unchanged,
+funnel_overview within 2% of the generator's ground truth) both stayed
+green with zero edits, which is itself evidence the gold-mart numbers
+did not move.
+
+Additional equivalence-adjacent checks in tests/test_medallion.py:
+  - silver.web_user_stages row count == COUNT(DISTINCT user_pseudo_id)
+    FROM web_events.
+  - silver.app_user_stages row count == COUNT(DISTINCT hashed_device_id)
+    FROM app_events WHERE event_name = 'app_open'.
+  - silver.v_attribution_eligible row count == COUNT(*) FROM id_bridge
+    WHERE opt_in_flag = true.
+  - Every gold mart returns > 0 rows.
+
+
+4. DIALECT RISKS NOT VERIFIABLE IN THIS SANDBOX
+--------------------------------------------------
+This environment has no network access to a Databricks workspace, so
+sql/medallion.sql has been executed and equivalence-tested against DuckDB
+only. The following statements/constructs are believed portable (several
+were already relied upon, unmodified, by the pre-M3c metrics.yaml) but
+have NOT been run against a real Databricks SQL warehouse:
+
+  a. `timestamp_expr + INTERVAL 28 DAY` / `- INTERVAL 34 DAY` (used in
+     silver.app_user_stages' d30_hits/censored logic). DuckDB accepts the
+     singular unit form; Databricks/Spark SQL is documented to accept it
+     too, but this has not been executed there.
+  b. `DATE_TRUNC('week', ts)` (gold.weekly_test_starts). Both engines
+     support DATE_TRUNC with a 'week' unit, but week-start-day conventions
+     (Monday vs. Sunday) have not been cross-checked against a live
+     Databricks warehouse — if they differ, weekly_test_starts' week_start
+     values (not row counts) could shift by a few days.
+  c. `COMMENT ON TABLE ... IS '...'` / `COMMENT ON VIEW ... IS '...'` for
+     all 17 objects. Verified to work on DuckDB 1.5.5. Databricks SQL
+     documents COMMENT ON support but this was never executed against a
+     live workspace — if a permission or version issue rejects one,
+     agent.medallion.apply_medallion logs it and continues (verified by
+     tests/test_medallion.py::TestApplyMedallion::
+     test_comment_on_failure_is_logged_and_non_fatal), so a rejection
+     would not block the layers themselves, only lose that one comment.
+  d. `CREATE SCHEMA IF NOT EXISTS <bare_name>` resolving under the
+     connection's default catalog (so bronze/silver/gold land in the same
+     catalog scripts/load_to_databricks.py loaded the raw tables into).
+     This is standard Unity Catalog behaviour but was not exercised
+     end-to-end here.
+  e. Window function `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...
+     DESC)` and `LAG(...) OVER (ORDER BY ...)` — standard ANSI window
+     functions, expected to be identical on both engines, not run on
+     Databricks here.
+  f. `1.0 * a / NULLIF(b, 0)` division-by-zero guarding and `||` string
+     concatenation (gold.step_conversion's `step` column) — both DuckDB
+     and Spark SQL support `||`, but again unverified live.
+
+None of these risks are new: (a), (b) and (f) already existed, unchanged,
+in the pre-M3c metrics.yaml and were presumably already accepted as
+portable by the M3b author. (c), (d) and (e) are the genuinely new
+surface area this module adds.
+
+
+5. DEVIATIONS FROM THE TASK'S LITERAL WORDING
+------------------------------------------------
+- The D30 window is implemented as the ORIGINAL metrics.yaml semantics —
+  event_timestamp >= first_open_ts + INTERVAL 28 DAY AND
+  event_timestamp <  first_open_ts + INTERVAL 35 DAY (28-34 days
+  inclusive) — rather than the task prompt's shorthand
+  "[first_open+28d, first_open+34d)". The RULES explicitly require KPI
+  values to remain identical to before, and metrics.yaml's own header
+  comment already documented the 28-34-inclusive/right-censoring
+  semantics this preserves; changing the boundary would have silently
+  changed every D30-based KPI's numbers.
+- silver.web_user_stages.market is sourced from bronze.web_events.country
+  (renamed), not a new field — verified empirically that every bridge
+  row's web_pseudo_id has a country that always equals that bridge row's
+  own `market` value (0 mismatches across 6,863 bridge rows), and that
+  country/device_category/consent_state/utm_campaign are all stable
+  (single-valued) per user_pseudo_id in this dataset (0 counter-examples),
+  which is what makes a clean user-grain silver table possible at all.
+- gold.pairing_by_platform_market and gold.d30_by_channel are deliberately
+  built from silver.app_user_stages JOIN silver.v_attribution_eligible
+  directly (NOT from silver.linked_journeys) — the original KPI SQL for
+  both never required first_open_ts > test_complete_ts, and routing them
+  through linked_journeys would have changed their populations. This is
+  called out explicitly in each mart's COMMENT ON.
+- ~6% of web_user_stages users (6,371 of 106,371) have a
+  first_test_complete_ts with no first_test_start_ts — a data-quality
+  artifact of the generator (unrelated to this task; data/ and
+  generate_data.py were not touched). gold.completion_by_channel and
+  gold.completion_by_device reproduce the original's
+  `WHERE first_test_start_ts IS NOT NULL` filter exactly, so this noise
+  is excluded identically to the pre-M3c behaviour (verified by the
+  KPI-equivalence tests, not by inspection alone).
+
+
+6. REMAINING USER-SIDE STEPS
+-------------------------------
+1. On a machine with real Databricks network access: run
+   `python scripts/load_to_databricks.py` (unchanged prerequisites — see
+   docs/deploy_guide.md section 5) and confirm the new "Gold layer
+   verification" block at the end of its output shows all 10 gold marts
+   with row counts matching section 2 of this report (5/5/5/3/5/5/6/5/13/3).
+   This is the one end-to-end check that cannot run in this sandbox.
+2. Spot-check the dialect risks in section 4 against that same run —
+   in particular the INTERVAL arithmetic (4a) and DATE_TRUNC week
+   boundary (4b), since those are the two constructs most likely to
+   behave subtly differently on Spark SQL vs. DuckDB.
+3. Import `notebooks/funnel_analysis.ipynb` into the Databricks workspace,
+   set its `catalog` variable to match `DATABRICKS_CATALOG` (default
+   "workspace"), and run it top-to-bottom against a serverless SQL
+   warehouse to confirm the %sql cells execute as expected.
+4. Nothing else in this module requires the user's approval to already be
+   live locally — `AGENT_DB=duckdb` (the default) already exercises the
+   full bronze/silver/gold build on every local run/demo/test.

@@ -1,0 +1,223 @@
+M7b (frontend features) — verification report
+================================================
+
+PYTEST
+------
+python3 -m pytest -q  ->  297 passed in ~15-16s (unchanged from before M7b;
+app/main.py and src/ were not touched by this module).
+
+WHAT WAS BUILT (app/static/index.html unless noted)
+----------------------------------------------------
+1. SQL syntax highlighting
+   - Vendored highlight.js 11.12.0 core + all "common" languages (incl. SQL)
+     as a single browser IIFE bundle, built locally with esbuild from the
+     official npm package (`highlight.js/lib/common`) since the npm
+     tarball no longer ships a prebuilt dist/highlight.min.js the way it
+     used to — see "Deviations" below.
+     -> app/static/vendor/highlight.min.js (164 KB, BSD-3-Clause, window.hljs)
+   - Small inline dark theme in <style> (pre.sql .hljs-*) matching the
+     existing bg #1c2422 / #d6f5ee look: keywords in an accent-soft green
+     (#8fe3c0), built-ins/types a deeper teal (#5fb3a3), strings gold
+     (#f2c94c), numbers/literals orange (#e2975d), comments muted italic.
+   - highlightSql() helper applied everywhere SQL is rendered: chat answer
+     bubbles (addAgentMessage) and live/collapsed trace steps (addStep).
+     Falls back to the pre-M7b escaped plain-text rendering whenever
+     window.hljs is missing or throws.
+
+2. Chat "Show data" collapsible
+   - Any agent answer with rows now gets a "Show data" toggle next to
+     "Show SQL", revealing a scrollable .fallback-table-styled table
+     capped at 50 rows, with a "Showing first 50 rows of N." note when
+     truncated (EN/TR). Shared buildRowsTableHtml() helper also backs the
+     dashboard's chart-load-failure fallback table (same visual language,
+     different existing 12-row cap there, untouched).
+
+3. Dashboard card features (makeCard), on both single-question cards and
+   the top-12 grid:
+   - Close (x) button: disposes the card's echarts instance (if any) and
+     removes the card; shows the empty-state again if the grid empties out.
+   - Chart-type switcher (small icon button): bar -> line -> pie, re-
+     rendering from the card's own stored rows + chart spec via a fresh
+     buildEchartsOption() call (notMerge:true). Pie is offered only for
+     single-series charts (chart.series present -> pie skipped); funnel-
+     type cards keep their horizontal-bar special case and only toggle
+     bar/line (no pie). Skipped entirely for "stat" tiles (nothing to
+     switch).
+   - "Ask about this chart" button: writes "About the '<title>' chart: "
+     (EN) / "'<title>' grafiği hakkında: " (TR) into the question input
+     and focuses it.
+   - Native HTML5 drag & drop reordering: draggable cards, a drop
+     indicator (inset accent border, before/after) computed per-card from
+     pointer position (same-row -> left/right, different-row -> top/
+     bottom), reorder on drop, chart resize afterwards. Dropping past the
+     last card (on the grid's empty background) appends to the end.
+
+4. Chip management
+   - Each chip gets a small x, hidden until hover on pointer devices and
+     always faintly visible on touch (`@media (hover:none)`) instead of
+     requiring a long-press.
+   - After any agent answer (success or error), the matching user bubble
+     gets a small pin (📌) button that saves that question as a chip.
+   - Chip set = per-language defaults minus deletions plus pinned
+     questions, persisted to localStorage (key funnelCopilotChips_v1,
+     every read/write in try/catch); corrupt/garbage stored JSON silently
+     falls back to "no customizations" (verified with Playwright: writing
+     '{not-json' to that key and reloading restores the plain defaults).
+   - "Reset chips" mini-link restores the current language's defaults.
+
+5. Header controls
+   - Model tier segmented control (Fast | Balanced | Max, default Max),
+     persisted to localStorage (funnelCopilotTier_v1; invalid/garbage
+     values fall back to "max"), sent as `tier` on every /api/ask and
+     /api/ask/stream call.
+   - "Partial memory" toggle (checked by default; EN "Partial memory" /
+     TR "Kısmi hafıza"), sent as memory=on|off on every ask.
+   - Footer now also shows the active tier ("... - Tier: Max" / "...
+     - Seviye: Maks").
+   - session_id: one crypto.randomUUID() per page load (module variable,
+     deliberately never persisted to localStorage), sent on every ask;
+     falls back to a Date.now()+Math.random() id if randomUUID is
+     unavailable.
+
+6. "context" SSE trace event
+   - Renders as its own trace step: icon 🧠, label "Using context from
+     previous question" / "Önceki sorunun bağlamı kullanılıyor" —
+     confirmed live against a real (scripted) two-question session where
+     the second, short follow-up question triggered M7a's context
+     injection (see m7b_context_trace.png).
+
+7. Docs
+   - No changes made to docs/api_contract.md or src/agent/README.md: both
+     already fully describe the M7a-added params/event/health fields from
+     a frontend-integration point of view (including "a UI can show it as
+     a small indicator" for the context event), and M7b adds no new env
+     vars or API surface of its own. Re-read both end to end and found
+     nothing frontend-visible left undocumented.
+
+VERIFICATION SETUP
+-------------------
+Two local servers were used (both via `uvicorn`, no network egress
+needed — OpenAI/Anthropic calls are blocked from this sandbox anyway):
+
+  a) A ScriptedLLM-backed AgenticFunnelAgent (same pattern as the
+     existing /tmp/demo_server.py from an earlier module), extended to
+     forward session_id/memory_enabled into a shared ConversationMemory
+     so the M7a "context" injection is exercisable end-to-end. Two
+     scripted turns were used: an opening question (get_schema ->
+     search_knowledge -> run_sql-that-fails -> retry -> run_sql -> content
+     answer, exercising SQL highlighting/retry/citations/rows) followed
+     by a short referential follow-up ("And on iOS?") in the same
+     session, which reliably triggers is_referential_question() and the
+     "context" event.
+  b) The real keyless KeywordLLM path (OPENAI_API_KEY/ANTHROPIC_API_KEY
+     cleared before importing app.main), to confirm the new tier/
+     session_id/memory query params are accepted harmlessly by the
+     plan+answer fallback stream and that every new UI feature still
+     renders correctly off single-shot FunnelAgent results (chart/rows
+     without a live trace).
+
+Both were driven with Playwright (chromium, PLAYWRIGHT_BROWSERS_PATH).
+Browser console was watched for errors on every run: zero errors in any
+scenario below.
+
+SCREENSHOTS (reports/m7b_*.png)
+---------------------------------
+- m7b_chat_sql_data.png     Chat answer with highlighted SQL ("Hide SQL"
+                            open) and the "Show data" table open beneath
+                            it, in the same bubble.
+- m7b_context_trace.png     Second (referential) question's collapsed
+                            trace expanded, showing the 🧠 "Using context
+                            from previous question" step between
+                            "Planning" and "Writing answer"; the first
+                            answer's SQL + Show-data table remain visible
+                            above it.
+- m7b_header_controls.png   Header crop: tier segmented control (Fast
+                            active), "Partial memory" checkbox, EN/TR
+                            toggle.
+- m7b_dashboard_grid.png    Top-12 KPI grid: every card shows the chart-
+                            type icon button, close (x), and "Ask about
+                            this chart" pill.
+- m7b_dashboard_after_dnd.png
+                            Same grid after (1) cycling the first card's
+                            funnel chart from horizontal-bar to line via
+                            the type switcher and (2) dragging the 3rd
+                            card to the front via native HTML5 DnD -- both
+                            visibly took effect.
+- m7b_dashboard_final.png   After closing one card (grid re-flowed to 3
+                            cards) and clicking "Ask about this chart" on
+                            another -- the composer input shows "About the
+                            'Hearing test completion rate by acquisition
+                            channel' chart: ".
+- m7b_chips.png             Chip bar after pinning the just-asked question
+                            (toast "Added as a chip.") and deleting one
+                            default chip -- "Reset chips" link visible.
+- m7b_tr_lang.png           Full TR translation of every new label: tier
+                            buttons ("Hızlı/Dengeli/Maks"), "Kısmi hafıza",
+                            "Balonları sıfırla", footer "Seviye: Maks".
+- m7b_keyless_fallback.png  Same features (SQL highlight, Show data, card
+                            controls) rendering correctly off the keyless
+                            KeywordLLM plan+answer fallback path (no live
+                            multi-step trace, 2-step "View trace").
+
+MANUAL-ONLY CHECKS LEFT FOR A REAL-LLM ENVIRONMENT
+----------------------------------------------------
+- The above "context" trace step was exercised via a ScriptedLLM standing
+  in for a real tool-calling provider (this sandbox has no network access
+  to api.openai.com/api.anthropic.com); worth a quick sanity check again
+  against a real OpenAI/Anthropic-backed deployment, though the code path
+  (agentic.py's context_block/event) is identical either way.
+- Touch-device chip deletion (always-faintly-visible x via
+  `@media (hover:none)`) was implemented per the CSS media feature rather
+  than a long-press gesture (see Deviations) -- worth a look on an actual
+  phone/tablet.
+- Drag-and-drop reordering was verified with Playwright's synthetic mouse
+  events (mousedown/move/up), which chromium accepts as real HTML5 DnD;
+  a manual check with a real trackpad/mouse drag is still worthwhile.
+- localStorage persistence across page reloads was verified within a
+  single browser session (tier survived a reload); a true separate-tab/
+  separate-session persistence check is worth a manual look on the
+  deployed domain (this sandbox's two Playwright runs used separate
+  throwaway browser profiles, which is a test-harness artifact, not an
+  app behaviour, per the CHIPS check below).
+
+DEVIATIONS FROM THE BRIEF
+----------------------------
+- highlight.js dist build: the brief said "npm highlight.js@11 dist:
+  highlight.min.js already includes common languages incl. sql — copy to
+  app/static/vendor/highlight.min.js", but the current highlight.js@11 npm
+  package (verified against 11.12.0, the latest at time of writing) no
+  longer ships a prebuilt dist/ folder at all (that convenience build now
+  only exists on the project's GitHub Pages/CDN, not in the npm tarball,
+  and this sandbox's proxy blocks cdnjs/jsdelivr for non-script fetches
+  from plain curl). Built the equivalent bundle locally instead: `npm
+  install highlight.js@11.12.0 esbuild`, then esbuild-bundled
+  `highlight.js/lib/common` (the same "core + common languages incl. SQL"
+  set the brief asked for) into one minified IIFE that assigns
+  window.hljs, and copied that to app/static/vendor/highlight.min.js.
+  Verified in Node that hljs.highlight(sql, {language:'sql'}) round-trips
+  correctly before wiring it into the page.
+- Touch chip deletion: implemented as "always-visible tiny x" via
+  `@media (hover:none)` rather than a long-press gesture — the brief
+  offered either ("a long-press or always-visible tiny x"); the always-
+  visible route is simpler, more discoverable, and needs no custom touch-
+  timer logic.
+- Chip persistence is keyed per UI language (funnelCopilotChips_v1 stores
+  {en:{removed,pinned}, tr:{removed,pinned}} separately) since the two
+  languages' default chip text differs; "reset chips" resets only the
+  currently-active language's customizations, not both at once. Not
+  explicitly specified either way in the brief.
+- "Ask about this chart"/pin-question wiring reuses the app's existing
+  single-flight assumption (one send in flight at a time, like the
+  pre-existing typingEl/disabled-send-button pattern) rather than adding
+  a full per-request tracking structure — consistent with the rest of the
+  file's style, called out here for transparency.
+- docs/api_contract.md and src/agent/README.md were left unmodified per
+  the brief's "ONLY if anything frontend-visible needs documenting beyond
+  M7a's update (likely nothing)" — nothing did.
+
+FILES CHANGED
+---------------
+- app/static/index.html          (all M7b feature work)
+- app/static/vendor/highlight.min.js   (new, vendored)
+
+No files under src/, sql/, data/, or scripts/ were touched.

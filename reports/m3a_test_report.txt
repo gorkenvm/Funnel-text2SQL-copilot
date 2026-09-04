@@ -1,0 +1,201 @@
+================================================================================
+M3a Test Report — Agentic Upgrade (multi-step tool-use loop, SQL self-
+correction, SSE live trace, lightweight RAG, OpenAI provider support)
+================================================================================
+Date: 2026-09-02
+Scope: src/agent/{llm,tools,agentic,testing,knowledge}.py, app/main.py
+       (GET /api/ask/stream), app/static/index.html, docs/knowledge/*.md
+Command: PYTHONPATH=src python3 -m pytest tests -v
+
+All API calls in this suite are offline/deterministic:
+  - api.openai.com and api.anthropic.com are NOT reachable from this
+    sandbox and are never called by any test.
+  - agent.testing.ScriptedLLM stands in for a real provider's chat_step()
+    in every agentic-loop test (test_agentic.py).
+  - agent.knowledge.KnowledgeBase always uses its pure-Python BM25
+    fallback in tests (OPENAI_API_KEY is explicitly unset by an autouse
+    fixture in test_knowledge.py; app.main's own module-level LLM is
+    KeywordLLM in this environment since no key is configured either).
+
+--------------------------------------------------------------------------------
+PYTEST OUTPUT (full verbose run, 107 tests, 60 pre-existing + 47 new)
+--------------------------------------------------------------------------------
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/claude/work/sonova_case
+plugins: anyio-4.13.0
+collecting ... collected 107 items
+
+tests/test_agent_e2e.py::test_demo_question_answers[Show me the funnel by market] PASSED [  0%]
+tests/test_agent_e2e.py::test_demo_question_answers[Where is the biggest drop-off?] PASSED [  1%]
+tests/test_agent_e2e.py::test_demo_question_answers[Which channel completes the hearing test best?] PASSED [  2%]
+tests/test_agent_e2e.py::test_demo_question_answers[Compare pairing rate iOS vs Android by market] PASSED [  3%]
+tests/test_agent_e2e.py::test_demo_question_answers[Which channel has the best D30 retention?] PASSED [  4%]
+tests/test_agent_e2e.py::test_demo_question_answers[How many users can we actually link across web and app?] PASSED [  5%]
+tests/test_agent_e2e.py::test_demo_question_answers[Weekly trend of test starts] PASSED [  6%]
+tests/test_agent_e2e.py::test_demo_question_answers[Which channel drives downloads vs actual pairings?] PASSED [  7%]
+tests/test_agent_e2e.py::test_rows_are_capped_for_display PASSED         [  8%]
+tests/test_agent_e2e.py::test_list_metrics PASSED                        [  9%]
+tests/test_agent_e2e.py::test_run_metric_direct PASSED                   [ 10%]
+tests/test_agent_e2e.py::test_unmappable_question_clarifies PASSED       [ 11%]
+tests/test_agentic.py::TestSupportsAgentic::test_keyword_llm_does_not_support_agentic PASSED [ 12%]
+tests/test_agentic.py::TestSupportsAgentic::test_scripted_llm_supports_agentic PASSED [ 13%]
+tests/test_agentic.py::TestHappyPath::test_events_in_expected_order_and_final_answer PASSED [ 14%]
+tests/test_agentic.py::TestHappyPath::test_get_metric_emits_chart_event PASSED [ 14%]
+tests/test_agentic.py::TestSelfCorrection::test_broken_sql_then_corrected_sql_after_seeing_error PASSED [ 15%]
+tests/test_agentic.py::TestSelfCorrection::test_retry_exhaustion_yields_error_then_graceful_answer PASSED [ 16%]
+tests/test_agentic.py::TestToolCallCap::test_stops_after_max_tool_calls PASSED [ 17%]
+tests/test_agentic.py::TestDefaultKnowledgeBase::test_agent_builds_a_default_knowledge_base_when_none_given PASSED [ 18%]
+tests/test_api.py::test_health_ok PASSED                                 [ 19%]
+tests/test_api.py::test_ask_returns_rows_and_answer[Where is the biggest drop-off?] PASSED [ 20%]
+tests/test_api.py::test_ask_returns_rows_and_answer[Compare pairing rate iOS vs Android by market] PASSED [ 21%]
+tests/test_api.py::test_ask_returns_rows_and_answer[Which channel drives downloads vs actual pairings?] PASSED [ 22%]
+tests/test_api.py::test_ask_tr_lang_echoed_and_still_answers PASSED      [ 23%]
+tests/test_api.py::test_ask_rejects_empty_question PASSED                [ 24%]
+tests/test_api.py::test_metrics_returns_ten PASSED                       [ 25%]
+tests/test_api.py::test_dashboard_returns_ten_cards_with_rows PASSED     [ 26%]
+tests/test_api.py::test_dashboard_with_subset_of_keys PASSED             [ 27%]
+tests/test_api.py::test_dashboard_unknown_key_returns_json_error PASSED  [ 28%]
+tests/test_api.py::test_rate_limiter_triggers_429_after_burst PASSED     [ 28%]
+tests/test_api.py::test_unknown_api_route_returns_json_error PASSED      [ 29%]
+tests/test_api_stream.py::test_stream_is_sse_content_type PASSED         [ 30%]
+tests/test_api_stream.py::test_stream_yields_plan_then_answer_then_done PASSED [ 31%]
+tests/test_api_stream.py::test_stream_has_no_agentic_trace_events_in_keyless_mode PASSED [ 32%]
+tests/test_api_stream.py::test_stream_rejects_missing_question PASSED    [ 33%]
+tests/test_api_stream.py::test_stream_tr_lang_accepted PASSED            [ 34%]
+tests/test_funnel_truth.py::test_funnel_overview_matches_ground_truth PASSED [ 35%]
+tests/test_funnel_truth.py::test_funnel_is_monotonically_decreasing PASSED [ 36%]
+tests/test_guardrails.py::TestRejections::test_rejects_drop PASSED       [ 37%]
+tests/test_guardrails.py::TestRejections::test_rejects_ddl_hidden_in_select PASSED [ 38%]
+tests/test_guardrails.py::TestRejections::test_rejects_multi_statement PASSED [ 39%]
+tests/test_guardrails.py::TestRejections::test_rejects_unknown_table PASSED [ 40%]
+tests/test_guardrails.py::TestRejections::test_rejects_ground_truth_table PASSED [ 41%]
+tests/test_guardrails.py::TestRejections::test_rejects_unknown_table_in_join PASSED [ 42%]
+tests/test_guardrails.py::TestRejections::test_rejects_unknown_table_in_comma_list PASSED [ 42%]
+tests/test_guardrails.py::TestRejections::test_rejects_insert_update_delete PASSED [ 43%]
+tests/test_guardrails.py::TestRejections::test_rejects_pragma_attach_copy PASSED [ 44%]
+tests/test_guardrails.py::TestRejections::test_rejects_non_select_start PASSED [ 45%]
+tests/test_guardrails.py::TestRejections::test_rejects_file_reading_functions PASSED [ 46%]
+tests/test_guardrails.py::TestRejections::test_rejects_quoted_path_as_table PASSED [ 47%]
+tests/test_guardrails.py::TestRejections::test_rejects_empty PASSED      [ 48%]
+tests/test_guardrails.py::TestAcceptance::test_accepts_simple_select PASSED [ 49%]
+tests/test_guardrails.py::TestAcceptance::test_accepts_cte_and_joins PASSED [ 50%]
+tests/test_guardrails.py::TestAcceptance::test_accepts_trailing_semicolon PASSED [ 51%]
+tests/test_guardrails.py::TestAcceptance::test_accepts_every_registry_query PASSED [ 52%]
+tests/test_guardrails.py::TestEnforceLimit::test_appends_limit_when_absent PASSED [ 53%]
+tests/test_guardrails.py::TestEnforceLimit::test_respects_existing_limit PASSED [ 54%]
+tests/test_guardrails.py::TestEnforceLimit::test_custom_max_rows PASSED  [ 55%]
+tests/test_guardrails.py::TestEnforceLimit::test_strips_trailing_semicolon PASSED [ 56%]
+tests/test_knowledge.py::TestChunking::test_files_produce_multiple_chunks PASSED [ 57%]
+tests/test_knowledge.py::TestChunking::test_chunks_respect_the_word_budget PASSED [ 57%]
+tests/test_knowledge.py::TestChunking::test_chunk_has_heading_and_nonempty_text PASSED [ 58%]
+tests/test_knowledge.py::TestChunking::test_chunk_markdown_splits_on_headings PASSED [ 59%]
+tests/test_knowledge.py::TestChunking::test_chunk_markdown_splits_long_section_by_word_budget PASSED [ 60%]
+tests/test_knowledge.py::TestFallbackRetrieval::test_search_returns_result_shape PASSED [ 61%]
+tests/test_knowledge.py::TestFallbackRetrieval::test_mobile_completion_question_surfaces_insights PASSED [ 62%]
+tests/test_knowledge.py::TestFallbackRetrieval::test_privacy_question_surfaces_privacy_doc PASSED [ 63%]
+tests/test_knowledge.py::TestFallbackRetrieval::test_attribution_question_surfaces_attribution_doc PASSED [ 64%]
+tests/test_knowledge.py::TestFallbackRetrieval::test_no_match_returns_empty PASSED [ 65%]
+tests/test_knowledge.py::TestFallbackRetrieval::test_never_calls_the_network PASSED [ 66%]
+tests/test_llm_provider_selection.py::test_defaults_to_keyword_with_no_keys PASSED [ 67%]
+tests/test_llm_provider_selection.py::test_openai_key_selects_openai PASSED [ 68%]
+tests/test_llm_provider_selection.py::test_openai_wins_over_anthropic_when_both_keys_set PASSED [ 69%]
+tests/test_llm_provider_selection.py::test_agent_llm_env_forces_keyword_even_with_a_key_set PASSED [ 70%]
+tests/test_llm_provider_selection.py::test_agent_llm_env_forces_openai PASSED [ 71%]
+tests/test_llm_provider_selection.py::test_agent_llm_env_openai_without_a_key_degrades_to_keyword PASSED [ 71%]
+tests/test_llm_provider_selection.py::test_openai_llm_exposes_plan_translate_and_chat_step PASSED [ 72%]
+tests/test_llm_provider_selection.py::test_keyword_llm_does_not_expose_chat_step PASSED [ 73%]
+tests/test_metrics.py::test_registry_has_ten_metrics PASSED              [ 74%]
+tests/test_metrics.py::test_registry_entries_are_complete PASSED         [ 75%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[funnel_overview] PASSED [ 76%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[step_conversion_rates] PASSED [ 77%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[completion_rate_by_channel] PASSED [ 78%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[completion_rate_by_device] PASSED [ 79%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[downloads_by_channel] PASSED [ 80%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[pairing_rate_by_channel] PASSED [ 81%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[pairing_rate_by_platform_market] PASSED [ 82%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[d30_retention_by_channel] PASSED [ 83%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[weekly_test_starts_trend] PASSED [ 84%]
+tests/test_metrics.py::test_metric_sql_executes_and_returns_rows[linkable_share_by_market] PASSED [ 85%]
+tests/test_metrics.py::test_rate_metrics_are_fractions PASSED            [ 85%]
+tests/test_tools.py::TestGetSchema::test_shape PASSED                    [ 86%]
+tests/test_tools.py::TestGetSchema::test_is_cached PASSED                [ 87%]
+tests/test_tools.py::TestGetSchema::test_via_registry_call PASSED        [ 88%]
+tests/test_tools.py::TestRunSql::test_happy_path_returns_rows_and_row_count PASSED [ 89%]
+tests/test_tools.py::TestRunSql::test_caps_rows_but_reports_true_row_count PASSED [ 90%]
+tests/test_tools.py::TestRunSql::test_guardrail_violation_raises_tool_error PASSED [ 91%]
+tests/test_tools.py::TestRunSql::test_ddl_raises_tool_error PASSED       [ 92%]
+tests/test_tools.py::TestRunSql::test_db_error_raises_tool_error_with_message PASSED [ 93%]
+tests/test_tools.py::TestRunSql::test_via_registry_call PASSED           [ 94%]
+tests/test_tools.py::TestGetMetric::test_known_key_returns_rows_and_chart PASSED [ 95%]
+tests/test_tools.py::TestGetMetric::test_unknown_key_raises_tool_error PASSED [ 96%]
+tests/test_tools.py::TestGetMetric::test_via_registry_call PASSED        [ 97%]
+tests/test_tools.py::TestSearchKnowledgeWithoutKnowledgeBase::test_returns_empty_results_when_no_kb_configured PASSED [ 98%]
+tests/test_tools.py::TestToolDefsAndUnknownTool::test_as_tool_defs_lists_all_four_tools PASSED [ 99%]
+tests/test_tools.py::TestToolDefsAndUnknownTool::test_unknown_tool_name_raises_tool_error PASSED [100%]
+
+============================= 107 passed in 4.52s ==============================
+
+--------------------------------------------------------------------------------
+NEW TEST FILES (47 new tests, by file)
+--------------------------------------------------------------------------------
+tests/test_tools.py                 15 tests  - typed tool registry (get_schema
+                                                 shape/caching, run_sql guardrail
+                                                 + DB-error paths, get_metric,
+                                                 unknown-tool handling)
+tests/test_knowledge.py             11 tests  - markdown chunking (heading split,
+                                                 ~300-word budget), BM25 fallback
+                                                 retrieval relevance per topic
+tests/test_agentic.py                8 tests  - ScriptedLLM-driven loop: event
+                                                 ordering, SQL self-correction,
+                                                 retry exhaustion, tool-call cap,
+                                                 default-KnowledgeBase wiring
+tests/test_api_stream.py             5 tests  - GET /api/ask/stream SSE contract
+                                                 in keyless (KeywordLLM) mode
+tests/test_llm_provider_selection.py 8 tests  - get_llm() provider-selection
+                                                 order (AGENT_LLM env override,
+                                                 auto-detect, graceful fallback
+                                                 when a provider fails to
+                                                 construct at all)
+
+--------------------------------------------------------------------------------
+SELF-CORRECTION EVENT TRANSCRIPT (agent.agentic.AgenticFunnelAgent.run(),
+driven by agent.testing.ScriptedLLM — fully deterministic, no network)
+--------------------------------------------------------------------------------
+Question: "How many web events are there?"
+Script: (1) run_sql against a non-whitelisted table -> guardrail error;
+        (2) sees the error in the tool result, retries with corrected SQL
+            against web_events -> succeeds;
+        (3) final plain-text answer, no further tool call.
+
+SELF-CORRECTION TRANSCRIPT (ScriptedLLM, question: 'How many web events are there?')
+==============================================================================
+[1] data: {"type": "plan", "text": "Planning how to answer: 'How many web events are there?'"}
+[2] data: {"type": "tool_call", "name": "run_sql", "arguments": {"sql": "SELECT * FROM secret_table"}, "call_id": "c1"}
+[3] data: {"type": "sql", "sql": "SELECT * FROM secret_table"}
+[4] data: {"type": "tool_result", "name": "run_sql", "call_id": "c1", "result": {"error": "I can only query these tables: app_events, id_bridge, web_events. Unknown table(s) referenced: secret_table."}, "ok": false}
+[5] data: {"type": "retry", "attempt": 1, "error": "I can only query these tables: app_events, id_bridge, web_events. Unknown table(s) referenced: secret_table."}
+[6] data: {"type": "tool_call", "name": "run_sql", "arguments": {"sql": "SELECT count(*) AS n FROM web_events"}, "call_id": "c2"}
+[7] data: {"type": "sql", "sql": "SELECT count(*) AS n FROM web_events"}
+[8] data: {"type": "tool_result", "name": "run_sql", "call_id": "c2", "result": {"sql": "SELECT count(*) AS n FROM web_events\nLIMIT 200", "rows": [{"n": 307529}], "row_count": 1}, "ok": true}
+[9] data: {"type": "answer", "answer": "There are several thousand web events in total.", "sql": "SELECT count(*) AS n FROM web_events\nLIMIT 200", "rows": [{"n": 307529}], "chart": null, "citations": []}
+==============================================================================
+Total events: 9
+Event type sequence: ['plan', 'tool_call', 'sql', 'tool_result', 'retry', 'tool_call', 'sql', 'tool_result', 'answer']
+
+--------------------------------------------------------------------------------
+RESULT
+--------------------------------------------------------------------------------
+107 passed, 0 failed, 0 skipped, 0 errors.
+All 60 pre-existing M1/M2 tests remain green, unmodified in behaviour.
+
+--- Manager review fixes (post-implementation) ---
+1. SSE race fix in index.html: after the "answer" event, the stream closing no
+   longer triggers the POST fallback (answered guard + "done" listener).
+2. app/main.py now auto-loads a repo-root .env (python-dotenv, optional) so
+   plain `uvicorn` picks up OPENAI_API_KEY like docker compose does.
+3. tests/conftest.py pins AGENT_LLM=keyword so a developer's real .env keys
+   can never switch the suite into a live provider (offline determinism).
+Re-verified: 107/107 pass; scripted end-to-end SSE run renders answer bubble
+with citation chips in the browser (Playwright).

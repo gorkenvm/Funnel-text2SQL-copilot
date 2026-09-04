@@ -1,0 +1,169 @@
+{
+  "_comment": [
+    "M11 filterable-KPI registry for the natural-language 'build me a KPI",
+    "dashboard for <range>/<market>' flow (agent.dashboard.run_dashboard).",
+    "Each entry's `sql` is a thin SELECT over one of the two dimensional",
+    "gold cubes (gold.web_funnel_daily_cube / gold.journey_daily_cube,",
+    "see sql/medallion.sql) with exactly one `{{where}}` placeholder,",
+    "substituted server-side by agent.dashboard.build_where() from an",
+    "allowlisted set of columns (`filter_columns` below) and validated,",
+    "quoted filter values only -- never raw user text. `filter_columns`",
+    "maps the generic filter names (date_start/date_end/market/channel/",
+    "device/platform) to the actual column on THIS kpi's cube; a filter",
+    "dimension the cube does not carry (e.g. `platform` on a web-cube KPI)",
+    "is simply absent from the map and is silently not applied to that",
+    "one card -- it is still applied to every card whose cube has it.",
+    "Both cubes are DAY-grained (day_date) since the M11-fix -- date_start/",
+    "date_end always map to day_date, the finest grain a filter can be cut",
+    "at; dash_weekly_test_starts is the one KPI that still rolls day_date",
+    "UP to a week bucket in its own SELECT (a GROUP BY on top of the daily",
+    "cube), it just no longer relies on the cube itself being week-grained.",
+    "`chart`/`consent_note` follow the same shape as src/agent/metrics.yaml."
+  ],
+  "kpis": [
+    {
+      "key": "dash_funnel_stages",
+      "title": "Funnel: starts, completions, store redirects",
+      "cube": "gold.web_funnel_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "channel",
+        "device": "device_category"
+      },
+      "sql": "SELECT 'test_starts' AS stage, 1 AS stage_order, SUM(test_starts) AS users FROM gold.web_funnel_daily_cube WHERE {{where}} UNION ALL SELECT 'test_completes', 2, SUM(test_completes) FROM gold.web_funnel_daily_cube WHERE {{where}} UNION ALL SELECT 'store_redirects', 3, SUM(store_redirects) FROM gold.web_funnel_daily_cube WHERE {{where}} ORDER BY stage_order",
+      "chart": {"type": "funnel", "x": "stage", "y": "users"}
+    },
+    {
+      "key": "dash_step_conversions",
+      "title": "Step-to-step conversion under this filter",
+      "cube": "gold.web_funnel_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "channel",
+        "device": "device_category"
+      },
+      "sql": "WITH agg AS (SELECT SUM(test_starts) AS starts, SUM(test_completes) AS completes, SUM(store_redirects) AS redirects FROM gold.web_funnel_daily_cube WHERE {{where}}) SELECT 'start -> complete' AS step, 1 AS step_order, starts AS from_users, completes AS to_users, 1.0 * completes / NULLIF(starts, 0) AS conversion_rate FROM agg UNION ALL SELECT 'complete -> store redirect', 2, completes, redirects, 1.0 * redirects / NULLIF(completes, 0) FROM agg ORDER BY step_order",
+      "chart": {"type": "bar", "x": "step", "y": "conversion_rate"}
+    },
+    {
+      "key": "dash_completion_by_channel",
+      "title": "Completion rate by channel",
+      "cube": "gold.web_funnel_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "channel",
+        "device": "device_category"
+      },
+      "sql": "SELECT channel, SUM(test_starts) AS test_starts, SUM(test_completes) AS test_completes, 1.0 * SUM(test_completes) / NULLIF(SUM(test_starts), 0) AS completion_rate FROM gold.web_funnel_daily_cube WHERE {{where}} GROUP BY channel ORDER BY completion_rate DESC",
+      "chart": {"type": "bar", "x": "channel", "y": "completion_rate"}
+    },
+    {
+      "key": "dash_completion_by_device",
+      "title": "Completion rate by device",
+      "cube": "gold.web_funnel_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "channel",
+        "device": "device_category"
+      },
+      "sql": "SELECT device_category, SUM(test_starts) AS test_starts, SUM(test_completes) AS test_completes, 1.0 * SUM(test_completes) / NULLIF(SUM(test_starts), 0) AS completion_rate FROM gold.web_funnel_daily_cube WHERE {{where}} GROUP BY device_category ORDER BY completion_rate DESC",
+      "chart": {"type": "bar", "x": "device_category", "y": "completion_rate"}
+    },
+    {
+      "key": "dash_completion_channel_device",
+      "title": "Completion rate: channel x device",
+      "cube": "gold.web_funnel_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "channel",
+        "device": "device_category"
+      },
+      "sql": "SELECT channel, device_category, SUM(test_starts) AS test_starts, SUM(test_completes) AS test_completes, 1.0 * SUM(test_completes) / NULLIF(SUM(test_starts), 0) AS completion_rate FROM gold.web_funnel_daily_cube WHERE {{where}} GROUP BY channel, device_category ORDER BY channel, device_category",
+      "chart": {"type": "bar", "x": "channel", "y": "completion_rate", "series": "device_category"}
+    },
+    {
+      "key": "dash_downloads_by_channel",
+      "title": "Downloads by channel (bridge-linked)",
+      "cube": "gold.journey_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "acquisition_channel",
+        "platform": "platform"
+      },
+      "sql": "SELECT acquisition_channel AS channel, SUM(downloads) AS downloads FROM gold.journey_daily_cube WHERE {{where}} GROUP BY acquisition_channel ORDER BY downloads DESC",
+      "chart": {"type": "bar", "x": "channel", "y": "downloads"},
+      "consent_note": "Only consented, signed-in, bridge-linked users appear here -- treat as a lower bound and a channel-mix signal, not absolute download volume."
+    },
+    {
+      "key": "dash_pairing_by_channel",
+      "title": "Pairing rate by channel (bridge-linked)",
+      "cube": "gold.journey_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "acquisition_channel",
+        "platform": "platform"
+      },
+      "sql": "SELECT acquisition_channel AS channel, SUM(downloads) AS downloads, SUM(paired_users) AS paired_users, 1.0 * SUM(paired_users) / NULLIF(SUM(downloads), 0) AS pairing_rate FROM gold.journey_daily_cube WHERE {{where}} GROUP BY acquisition_channel ORDER BY pairing_rate DESC",
+      "chart": {"type": "bar", "x": "channel", "y": "pairing_rate"},
+      "consent_note": "Restricted to consented, signed-in, bridge-linked users; channels whose users consent less often are under-represented."
+    },
+    {
+      "key": "dash_pairing_by_platform_market",
+      "title": "Pairing rate by platform x market (bridge-linked)",
+      "cube": "gold.journey_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "acquisition_channel",
+        "platform": "platform"
+      },
+      "sql": "SELECT market, platform, SUM(downloads) AS downloads, SUM(paired_users) AS paired_users, 1.0 * SUM(paired_users) / NULLIF(SUM(downloads), 0) AS pairing_rate FROM gold.journey_daily_cube WHERE {{where}} GROUP BY market, platform ORDER BY market, platform",
+      "chart": {"type": "bar", "x": "market", "y": "pairing_rate", "series": "platform"},
+      "consent_note": "Market and platform are only known through the identity bridge, so this covers the linkable population, not every app device."
+    },
+    {
+      "key": "dash_d30_by_channel",
+      "title": "D30 retention by channel (bridge-linked)",
+      "cube": "gold.journey_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "acquisition_channel",
+        "platform": "platform"
+      },
+      "sql": "SELECT acquisition_channel AS channel, SUM(d30_eligible) AS eligible_users, SUM(d30_retained) AS retained_users, 1.0 * SUM(d30_retained) / NULLIF(SUM(d30_eligible), 0) AS d30_retention_rate FROM gold.journey_daily_cube WHERE {{where}} GROUP BY acquisition_channel ORDER BY d30_retention_rate DESC",
+      "chart": {"type": "bar", "x": "channel", "y": "d30_retention_rate"},
+      "consent_note": "Bridge-linked, non-censored users only; retention of non-linkable or too-recently-acquired users is unobservable by design."
+    },
+    {
+      "key": "dash_weekly_test_starts",
+      "title": "Weekly trend of test starts under this filter",
+      "cube": "gold.web_funnel_daily_cube",
+      "filter_columns": {
+        "date_start": "day_date",
+        "date_end": "day_date",
+        "market": "market",
+        "channel": "channel",
+        "device": "device_category"
+      },
+      "sql": "SELECT DATE_TRUNC('week', day_date) AS week_start, SUM(test_starts) AS test_starts FROM gold.web_funnel_daily_cube WHERE {{where}} GROUP BY 1 ORDER BY 1",
+      "chart": {"type": "line", "x": "week_start", "y": "test_starts"}
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Funnel Copilot — Mimari</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<style>body{font-family:system-ui,sans-serif;margin:16px;background:#f7f8f7;color:#1c2422}
+h1{font-size:1.1rem;color:#0b4f47} .box{background:#fff;border:1px solid #dfe3e1;border-radius:12px;padding:12px;overflow-x:auto}
+p{font-size:.9rem;line-height:1.5;max-width:70ch}</style></head><body>
+<h1>Phonak Funnel Copilot — Sistem Mimarisi</h1>
+<div class="box"><pre class="mermaid">
+flowchart TB
+    subgraph UI["Frontend — app/static/index.html (vanilla JS)"
+        ]
+        CHAT["Chat panel<br/>(SSE EventSource, live agent trace)"]
+        DASH["Live dashboard<br/>(ECharts, top-12 KPI cards)"]
+    end
+
+    subgraph API["Backend — FastAPI (app/main.py)"]
+        ASK["GET /api/ask/stream (SSE)<br/>POST /api/ask (legacy)"]
+        DASHAPI["POST /api/dashboard<br/>GET /api/metrics · /health"]
+        RL["per-IP rate limiters"]
+    end
+
+    subgraph AGENT["Interactive agent — AgenticFunnelAgent (agentic.py)"]
+        LOOP["Hand-written tool-use loop<br/>max 6 tool calls · ~60s · SQL self-correction (2 retries)"]
+    end
+
+    subgraph TOOLS["Tool registry (tools.py)"]
+        T1["get_schema<br/>(tables + samples, cached)"]
+        T2["run_sql<br/>(read-only)"]
+        T3["search_knowledge<br/>(RAG, k=3)"]
+        T4["get_metric<br/>(registry KPI)"]
+    end
+
+    GUARD["Guardrails (guardrails.py)<br/>SELECT-only · table whitelist · forced LIMIT<br/>(planned: SQLGlot AST validation)"]
+    REG["metrics.yaml<br/>12 KPIs → gold marts<br/>chart specs + consent notes"]
+    KB["KnowledgeBase (knowledge.py)<br/>docs/knowledge/*.md<br/>OpenAI embeddings + disk cache<br/>BM25 fallback (offline)"]
+
+    subgraph LLML["LLM layer (llm.py) — provider-agnostic chat_step"]
+        L1["OpenAILLM<br/>gpt-4o-mini (default)"]
+        L2["AnthropicLLM<br/>(optional)"]
+        L3["KeywordLLM<br/>keyless fallback"]
+        L4["ScriptedLLM<br/>(tests only)"]
+    end
+
+    subgraph DRV["Driver abstraction (db.py)"]
+        D1["DuckDBDriver<br/>local parquet, dev/backup"]
+        D2["DatabricksDriver<br/>SQL Warehouse, prod"]
+    end
+
+    subgraph LAKE["Lakehouse — sql/medallion.sql (one source, both engines)"]
+        BR["bronze.*<br/>raw events"]
+        SI["silver.*<br/>user-grain stages<br/><b>v_attribution_eligible</b> = consent gate"]
+        GO["gold.*<br/>12 business marts"]
+    end
+
+    subgraph SENT["Batch agent — Sentinel (daily 06:00, Databricks Job)"]
+        SCORE["sentinel_core.py<br/>28-day control bands + schema drift diff<br/>vs config/sentinel_registry.json"]
+        REP["DRAFT report → analyst<br/><b>human checkpoint</b> — nothing auto-distributed"]
+    end
+
+    CHAT -->|question| ASK --> LOOP
+    DASH --> DASHAPI --> REG
+    LOOP <-->|plan / tool calls| LLML
+    LOOP --> T1 & T2 & T3 & T4
+    T2 --> GUARD --> DRV
+    T4 --> REG --> DRV
+    T3 --> KB
+    KB -.embeddings.-> L1
+    DRV --> D1 & D2
+    D1 --> LAKE
+    D2 --> LAKE
+    BR --> SI --> GO
+    SENT -->|read-only SQL| DRV
+    SCORE --> REP
+    LLML -.narrates findings only.-> REP
+</pre></div>
+<p><b>İki ajan var:</b> soldaki akış <b>interaktif ajan</b> — soru gelir, LLM planlar, araçları çağırır (şema, SQL, bilgi tabanı, KPI registry), hatasını düzeltir, cevabı canlı izle yayınlar. Alttaki <b>nöbetçi ajan</b> ise zamanlanmış çalışır: istatistik anomaliyi bulur, LLM yalnızca anlatır, rapor insan onayı beklemeden kimseye gitmez. İkisi birbirini çağırmaz; sürücüyü, lakehouse'u ve LLM katmanını paylaşır.</p>
+<p><b>Modeller:</b> gpt-4o-mini (plan/cevap/çeviri), text-embedding-3-small (RAG); Claude opsiyonel; anahtarsız ortamda KeywordLLM. <b>Hafıza:</b> RAG bilgi tabanı (statik) + şema/registry hafızası var; <b>konuşma hafızası henüz yok</b> — M7 kalite turunun adayı.</p>
+</body></html>

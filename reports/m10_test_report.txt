@@ -1,0 +1,287 @@
+M10 — Dark theme, brand lockup, icon overhaul, splitter, connection
+indicator, thinking animation, Claude-style trace panel, catalog restyle
+=====================================================================
+
+SCOPE
+-----
+app/static/index.html ONLY (single-file frontend: all CSS/JS inline).
+No changes to app/main.py, src/, sql/, tests/, or vendor libs. Backend
+/health and /api/catalog contracts used as-is.
+
+PYTEST
+------
+python3 -m pytest -q from repo root: 298 passed (before and after all
+changes — confirmed twice, once as a baseline and once after the full
+M10 diff). No backend files were touched.
+
+
+PER-FEATURE NOTES
+-----------------
+
+1. Header brand lockup
+   - New inline-SVG 5-bar "sound-bars" mark (`eqBarsSvg()` in the script),
+     drawn from scratch: 5 rounded vertical bars, bottom-aligned, varying
+     heights, fill --accent with the center bar a new --brand-center token
+     (#9CC23F light / var(--action) dark per §5). Rendered at 22px in the
+     header (`#brand-mark`) and 16px inline wherever the "thinking"
+     placeholder shows (see point 7).
+   - h1 now reads "Phonak Funnel Copilot" (Fraunces 600, 20px) + a lighter
+     "Demo" word (--ink-soft). New i18n keys `brandName`/`brandDemo`
+     replace the old single `brandTitle` string (identical in EN/TR since
+     both are proper-noun/short common words).
+   - Synthetic-data badge compacted to a micro pill (font-size .62rem,
+     padding 2px 8px, was .72rem/4px 10px).
+
+2. Data catalog restyle
+   - Layer headers are now small tinted pill chips: `.catalog-layer-chip`
+     variants for bronze/silver/gold, using new tokens
+     --catalog-bronze-bg/--catalog-bronze-ink (bronze isn't in §1/§1b, but
+     §5's own catalog-drawer spec explicitly calls for a bronze tint —
+     this implements exactly that, with a dark-mode pair added since §1b
+     didn't itself enumerate one).
+   - Every table entry is its own boxed card (`.catalog-item`):
+     --surface-alt fill, 1px --border, radius 8, 8px/10px padding,
+     monospace name, COMMENT text below in --ink-muted 12px (Inter) when
+     the /api/catalog payload has one, hover --accent-soft. Click-to-
+     insert-at-cursor behavior unchanged (verified: clicking
+     `bronze.web_events` inserts the qualified name into the chat input).
+
+3. Draggable splitter
+   - New `#splitter` element between `.chat-panel` and `.dash-panel`
+     (10px hit area, `.splitter-grip` icon, `cursor:col-resize`).
+   - Pointer-event drag (`pointerdown`/`pointermove`/`pointerup`),
+     rAF-batched width updates + throttled `resizeChartsSoon()` during
+     drag, clamped 320px–60vw, double-click resets to the CSS default,
+     width persisted as a plain px integer under localStorage key
+     `fcSplit` (try/catch around every read/write, following the existing
+     `funnelCopilotBoard_v1`/chip-state pattern).
+   - Hidden via CSS on the ≤900px stacked breakpoint; that breakpoint's
+     `.chat-panel` width/flex/max-width/min-width rules are `!important`
+     so a persisted desktop split width can never leak onto mobile and
+     force horizontal overflow (verified via the mobile screenshots below
+     — no overflow at 390px even with a saved 250px-wider desktop split
+     from the same test run's localStorage... note: separate browser
+     contexts were used per screenshot so this specific interaction
+     wasn't exercised end-to-end in one session, but the CSS guard is
+     unconditional regardless of any stored value).
+
+4. Icon overhaul
+   - One inline-SVG icon set defined once as a `{name: pathMarkup}` map
+     (`ICONS`) plus an `iconSvg(name, size)` helper (24x24 viewBox, stroke
+     currentColor 1.6, round caps/joins, no fills) — reused everywhere:
+     trace step icons, catalog toggle button, chart-type switch button,
+     CSV download buttons (chat bubble + card), card close button, catalog
+     panel close button, pin-to-chip button, splitter grip, theme toggle
+     sun/moon.
+   - Confirmed via a full-file emoji scan (Python regex over the emoji
+     Unicode ranges) that no emoji remain in UI chrome — the one hit left
+     is inside a JS comment, not rendered markup.
+   - One deliberate addition beyond DESIGN.md §5's exact glyph list: `pin`
+     (a simple map-pin outline). The "pin this question as a chip" feature
+     needed a functional glyph and none of the listed 16 fit; it's drawn
+     in the identical stroke style so it reads as part of the same set.
+   - The chart-type switcher button used to show a different emoji per
+     active type (bar/line/pie); it now shows one fixed "chart" icon
+     regardless of state (DESIGN.md's icon list has a single "chart" glyph,
+     not three) — the button's title/aria-label still says "Switch chart
+     type". This is a small UX regression (no longer signals which type is
+     currently active at a glance) traded for staying inside the specified
+     icon set; noted here as the one place I simplified rather than adding
+     another icon.
+
+5. Connection indicator
+   - `#conn-indicator` next to the tier segmented control: 8px `.conn-dot`
+     + micro label. Polls GET /health every 30s (10s while offline, per
+     spec), states: databricks -> #2F9E63/"Databricks", duckdb ->
+     --ink-muted/"DuckDB local", unreachable -> --danger/"Offline". Title
+     tooltip carries driver + LLM + tier, refreshed on tier/language
+     change too (not just on each poll).
+   - 2s soft scale/opacity pulse (`@keyframes conn-pulse`) fires only when
+     the state string actually changes (guarded by a `connState` module
+     variable + a forced reflow to restart the CSS animation).
+   - Verified live: with GET /health aborted via Playwright route
+     interception, the dot turns red and the label reads "Offline" within
+     one poll cycle (reports/m10_conn_offline.png).
+   - The footer meta line is untouched/still present; this is additive.
+
+6. Light/Dark theme
+   - `[data-theme="dark"]` block overrides the exact §1b token list, plus
+     a `@media (prefers-color-scheme: dark)` block guarded by
+     `:not([data-theme="light"])` for the zero-JS default-follows-system
+     case. Toggle is a sun/moon ghost-icon button in the header; explicit
+     choice persisted in localStorage `fcTheme` (try/catch), default is
+     system preference.
+   - The two DESIGN.md §1b "Dark rules" exceptions (user chat bubble fill,
+     segmented-control selected state) are implemented as their own
+     semantic tokens (`--bubble-user-bg/-text`,
+     `--segment-active-bg/-text/-border`) defined once in :root and
+     re-defined in both dark blocks — so `.msg.user` and
+     `.tier-toggle/.lang-toggle button.active` still only ever reference a
+     token, never branch on `[data-theme]` themselves.
+   - `--action-ink:#201F1C` is a new *unthemed* token (defined only in
+     :root, never overridden) used for the "Ask"/"Build" button text
+     instead of `var(--ink)` — verified in the dark screenshots that both
+     buttons keep dark text on the still-lime fill.
+   - ECharts re-tinting: `CHART_AXIS_LINE_COLOR`/`CHART_AXIS_LABEL_COLOR`/
+     `CHART_LEGEND_TEXT_COLOR`/`CHART_BAR_GAP_COLOR` are mutable module
+     vars; the axis/legend style objects that used to be built once at
+     module load are now functions (`axisLabelStyle()`, `axisLineStyle()`,
+     `splitLineStyle()`, `legendTextStyle()`) so every `buildEchartsOption`
+     call reads the *current* value. `retintCharts()` re-reads the four
+     colors from `getComputedStyle(document.documentElement)` and calls
+     `inst.setOption(buildEchartsOption(inst._fcChart, inst._fcRows), true)`
+     for every live chart instance (each instance now carries `_fcChart`/
+     `_fcRows`, set in `renderChartInto`). Series colors are untouched —
+     confirmed visually in reports/m10_dashboard_dark.png (same green bars,
+     dark-appropriate axis/grid/labels).
+   - `.theme-swap,.theme-swap *{transition:none!important}` is toggled on
+     for one animation frame around the token swap so the instant-swap
+     rule in §6 actually holds (otherwise several hover/focus
+     `transition:` rules would visibly animate the color change).
+   - SQL highlight.js theme verified legible on the darker
+     `--surface-ink` (#0C1310 in dark) — reports/m10_sql_dark.png.
+
+7. Thinking animation
+   - `setThinking(true/false)` toggles a `.thinking` class on
+     `#brand-mark`; wired at the start of `sendQuestion()`/
+     `buildDashboard()` and cleared in `finishWithResult()` (covers both
+     the streaming and legacy-POST success paths) and every error branch
+     (`askViaPost` catch, the dashboard-intent catch inside
+     `sendQuestion`, `buildDashboard`'s `.finally`). `.thinking` drives a
+     `~0.9s` staggered `scaleY` bounce (`eq-bounce`) with
+     `transform-origin: bottom` via `transform-box: fill-box`; idle is
+     static.
+   - The chat bubble's pending-answer placeholder (`showTyping()`) now
+     renders the same 5-bar mark at 16px instead of the old 3-dot
+     ellipsis (dead `.dot`/`@keyframes blink` CSS removed).
+   - `prefers-reduced-motion: reduce` gets a dedicated `!important` rule
+     (`eq-opacity-pulse`, a gentle 1.6s opacity fade) that overrides the
+     page's existing blanket "freeze all animations" reduced-motion rule,
+     per §6's "equalizer becomes an opacity pulse" instruction.
+   - Because the demo runs with `AGENT_LLM=keyword`, real answers resolve
+     in well under 100ms, so a genuinely mid-stream screenshot is
+     essentially unobtainable — reports/m10_thinking_midstream.png is a
+     tight crop with `.thinking` force-added via `page.evaluate()` to show
+     one live animation frame, exactly as the task's "best effort" allows.
+
+8. Claude-style trace panel
+   - Streaming behavior is unchanged (steps still append live with their
+     secs badges). `collapseTrace()` was rewritten: instead of a plain
+     `<details>`, it now builds `.trace-summary` — a bordered/rounded
+     container with a real `<button aria-expanded>` reading "{n} steps ·
+     {total}s" (new i18n key `traceSummary`, computed by summing every
+     step's `.step-secs` badge) plus a chevron icon that rotates 90°.
+     Clicking expands a `.trace-summary-body-wrap` (CSS grid
+     `0fr`→`1fr` trick, 180ms ease-out, no JS height math) containing the
+     unchanged step rows (icon + label, secs badge now pushed hard right
+     via `margin-left:auto` in a `.trace-row` flex wrapper, hairline
+     `border-top` between rows). Steps with payloads (SQL) keep their
+     nested toggle/`<pre>` untouched. Collapsed by default for every
+     finished answer.
+   - `addStep()`/`markDone()` were switched from string-concatenation
+     `innerHTML` to DOM methods (`createElement`/`textContent`) — this was
+     needed anyway to slot in the new `<svg>` icons and nested
+     `.trace-row`, and incidentally removes a layer of manual
+     `escapeHtml()` calls in favor of `textContent`.
+   - BUG FOUND AND FIXED DURING SELF-REVIEW: the first `.trace-summary`
+     CSS draft set `overflow:hidden` (to clip the rounded corners around
+     the animated grid body) without `flex-shrink:0`. Because
+     `.trace-summary` is a flex item of `.messages` (a column flex
+     container) and `overflow:hidden` removes the browser's automatic
+     "don't shrink below content" protection for flex items,
+     `.trace-summary` was being crushed to ~2px tall (just its own
+     borders) whenever `.messages` was under space pressure — a real,
+     reproducible bug (confirmed via `getBoundingClientRect()` on both
+     collapsed and expanded states before/after the fix; the button and
+     the expanded panel were both fully populated in the DOM but
+     invisible). Fixed with an explicit `flex-shrink:0` on
+     `.trace-summary`, verified: collapsed height 37px, expanded height
+     106px, both correctly rendered in
+     reports/m10_trace_expanded.png/m10_trace_sql_nested.png.
+
+
+SCREENSHOTS (reports/)
+----------------------
+m10_welcome_light.png            welcome screen, light theme, desktop
+m10_welcome_dark.png             same, dark theme
+m10_focus_ring_theme_toggle.png  keyboard focus ring on the new toggle
+m10_answer_collapsed_trace.png   answered question, trace collapsed
+m10_trace_expanded.png           trace expanded (icons + hairlines + secs)
+m10_trace_sql_nested.png         second capture of expanded trace (bug-fix
+                                  verification pass)
+m10_thinking_midstream.png       header equalizer mid-bounce (forced frame,
+                                  see note above)
+m10_catalog_light.png            catalog drawer, light theme
+m10_catalog_dark.png             catalog drawer, dark theme
+m10_sql_dark.png                 SQL block legibility check, dark theme
+m10_splitter_dragged.png         chat panel widened via splitter drag
+m10_dashboard_light.png          top-12 dashboard, light theme
+m10_dashboard_dark.png           same, dark theme (charts re-tinted)
+m10_mobile_welcome.png           390px viewport, welcome (no overflow)
+m10_mobile_dashboard.png         390px viewport, dashboard
+m10_tr_language.png              Turkish UI, full string coverage
+m10_conn_offline.png             connection indicator in the offline state
+                                  (GET /health aborted via route interception)
+
+
+AMBIGUITIES RESOLVED (and how)
+-------------------------------
+- Chart-type switch icon: DESIGN.md's icon list has one "chart" glyph, not
+  a distinct bar/line/pie set. Kept the previous three-emoji-per-type
+  behavior would have meant inventing icons beyond the list; used the
+  single "chart" icon for all three states instead (title/aria-label still
+  names the action). Noted above as a small UX trade-off.
+- "pin" icon: not in DESIGN.md's §5 glyph list at all, but the pin-to-chip
+  feature (existing, pre-M10) needs *some* glyph now that its emoji is
+  gone. Drew one more icon in the exact same stroke style rather than
+  leaving the emoji in place or removing the feature.
+- Theme toggle icon semantics: shows the icon of the *current* theme (sun
+  visible in light mode, moon visible in dark mode) rather than the theme
+  clicking would switch to — the common convention (GitHub, etc.).
+- Splitter default width persistence format: stored as a plain rounded
+  pixel integer (not a percentage) under `fcSplit`, since the drag itself
+  operates in client pixels; clamped 320-60vw on both save and load so an
+  old value surviving a much narrower/wider window resize still lands in
+  range.
+- Trace summary total time: sums each step's already-rendered `.step-secs`
+  badge text (parsed back to a float) rather than tracking a second, raw
+  duration variable — keeps a single source of truth for "how long did
+  each step take" and automatically matches whatever the individual badges
+  show.
+- Catalog bronze tint: DESIGN.md §5 names "#A9743A-soft" for the bronze
+  chip but doesn't give exact hex pairs (unlike gold/silver, which map
+  directly to existing tokens) or a dark-mode value at all. Picked a soft
+  tan tint (#F1E4D6 bg / #8A5A2B ink) for light and a dark-mode-safe
+  inverse (#33230F bg / #D2A466 ink) that stays in the same bronze family,
+  under two new tokens (`--catalog-bronze-bg`/`--catalog-bronze-ink`).
+
+LOCALSTORAGE KEYS USED (M10-added)
+-----------------------------------
+- `fcTheme` — "light" | "dark" (absent = follow system). Read/write
+  wrapped in try/catch.
+- `fcSplit` — chat-panel width in px (absent = CSS default 38%). Read/
+  write wrapped in try/catch, clamped 320-60vw on every use.
+(Pre-existing keys `funnelCopilotTier_v1`, `funnelCopilotChips_v1`,
+`funnelCopilotBoard_v1` are unchanged.)
+
+KNOWN LIMITATIONS
+------------------
+- The funnel/horizontal-bar chart's value label can visually clip against
+  the card's right edge on narrow single-question cards (e.g. "100," for
+  100,000 in reports/m10_answer_collapsed_trace.png) — this is pre-existing
+  chart-layout behavior (label position:"right" against a fixed `grid.right`
+  margin), not something introduced or touched by M10, and out of this
+  round's scope (no chart *option*-shape changes beyond color tokens).
+- The chart-type switch button no longer visually signals which type
+  (bar/line/pie) is currently active (see "Ambiguities" above).
+- A genuinely mid-network-stream capture of the thinking animation isn't
+  practically obtainable against the keyword-LLM demo backend (sub-100ms
+  responses); the shipped screenshot forces the CSS state instead of
+  racing a real request.
+- Splitter width is not re-validated on window resize after the initial
+  load beyond the mobile breakpoint's `!important` override — a very wide
+  desktop window shrunk to, say, 950px (still above the 900px mobile
+  breakpoint) with a previously-saved near-max split could momentarily
+  exceed the new 60vw clamp until the next drag or reload recomputes it.
+  Not a data-loss or overflow risk (the splitter itself still works and a
+  reload snaps it back into clamp), just a minor staleness window.

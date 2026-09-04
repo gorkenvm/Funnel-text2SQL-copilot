@@ -1,0 +1,248 @@
+M9 — Brand restyle: test report
+================================
+Scope: app/static/index.html restyle only, per docs/DESIGN.md. No backend,
+src/, sql/, or tests/ changes. No feature, layout structure, or DOM changes
+beyond class/style additions and the mandatory footer disclaimer line.
+
+1. Pytest
+---------
+python3 -m pytest -q
+  298 passed in ~17s   (baseline before this work was also 298 passed — no
+  regressions; the suite doesn't touch app/static/, so this mainly confirms
+  the backend was left untouched.)
+
+2. Fonts (self-hosted, vendored)
+---------------------------------
+Source: npm @fontsource/inter@5.3.0, @fontsource/fraunces@5.3.0 (fetched in
+/tmp, not committed to the app). Only the files actually used were copied
+into app/static/vendor/fonts/ (latin subset, woff2 only):
+  inter-latin-400.woff2   (23.7 KB)
+  inter-latin-500.woff2   (24.3 KB)
+  inter-latin-700.woff2   (24.4 KB)
+  fraunces-latin-600.woff2 (18.1 KB)
+  Total: ~96 KB, self-hosted, font-display:swap, system-stack fallbacks
+  declared per DESIGN.md §3 (Inter -> -apple-system/Segoe UI/Roboto/sans-
+  serif; Fraunces -> Georgia/serif).
+Applied Fraunces (600) to the display roles DESIGN.md §3 enumerates:
+  welcome title (28px), stat-tile value (34px), dashboard card titles
+  (15px), "Live dashboard" / "Data catalog" section headers, and the
+  welcome suggestion cards' title line. Inter (400/500/700) everywhere else,
+  including the page's own <h1> brand lockup (not on the enumerated list —
+  see ambiguity #1 below).
+
+3. CSS token overhaul
+----------------------
+:root now carries the full DESIGN.md §1 palette (--ink/--ink-soft/--ink-
+muted, --surface/--surface-alt/--surface-ink, --border/--border-strong,
+--action/--action-hover, --accent/--accent-soft/--accent-mid, --danger,
+--warn-bg/--warn-border/--warn-ink) plus §4 spacing/radius/elevation and §6
+motion tokens. Old variable names are kept as aliases pointing at the new
+tokens (--bg, --panel, --text, --text-muted, --accent-dark) so most of the
+file's existing `var(--x)` usages needed no per-rule edits — only the
+values changed underneath them.
+
+Old -> new value mapping (selected):
+  --accent      #0f6b60 -> #154734 (deep green; was also used as the old
+                "everything-teal" fill — now split: bubbles/segmented
+                selected/links/focus use --accent, primary CTAs use the
+                new lime --action instead, see #2 below)
+  --accent-dark #0b4f47 -> now an alias for --accent (#154734)
+  --accent-soft #e4f2ef -> #E7F0EA
+  --bg          #f7f8f7 -> alias for --surface-alt #F5F5F3
+  --panel       #ffffff -> alias for --surface #FFFFFF (unchanged)
+  --border      #dfe3e1 -> #E4E3DE
+  --text        #1c2422 -> alias for --ink #201F1C
+  --text-muted  #5b6864 -> alias for --ink-muted #8A877F
+  --danger      #b3261e -> #B3261E (unchanged)
+  --radius      12px    -> alias for --radius-lg 16px (cards/panels);
+                new --radius-sm 8px (buttons/chips), --radius-md 10px
+                (inputs), --radius-pill 999px (badges/citation chips) added
+                so every corner radius in the file now traces to one of the
+                four DESIGN.md §4 values instead of an ad-hoc 6/8/10/12px.
+  SQL block bg  #1c2422 -> --surface-ink #17231C
+  SQL keyword   #8fe3c0 -> #CFFB5E (lime, exact §5 value)
+  SQL string    #f2c94c -> #9CCDB0 (was numbers' old color; now strings,
+                exact §5 value)
+  SQL number    #e2975d -> #E9C46A (exact §5 value)
+  SQL comment   #7c928d -> #7E8B83 (exact §5 value)
+  agent bubble  #f0f2f1 flat fill -> --surface + 1px --border (component
+                spec: "agent = --surface with border, not grey fill")
+  error bubble  #fbe9e7 -> new --danger-soft #FBEAE7 (derived — see
+                ambiguity #2)
+  retry badge   #fdecc8/#f0c46b/#8a5a00 -> --warn-bg/--warn-border/
+                --warn-ink (exact §5/§1 values)
+  table header  #f4f7f6 -> --surface-alt #F5F5F3; table border #e2e8e6 ->
+                --border #E4E3DE
+  build-btn     teal fill + drop shadow -> --action (lime) fill, --ink
+                text, no shadow (Button primary, §5)
+  composer btn  teal pill -> --action (lime) fill, radius 8 (Button
+                primary, §5)
+  chips (chat)  pill radius 999 -> radius 8 (§5 "Chips ... radius 8")
+  welcome cards accent-soft fill -> --surface + border, Fraunces title
+                (§5 "Welcome suggestion cards")
+  tier/lang     unselected teal-on-white text -> --ink-soft on --surface;
+  segmented     selected fill teal -> --accent, text white (§5, "NOT lime")
+  card icon btn square 6px radius -> circular (50%), ghost/--ink-muted,
+                hover --accent-soft circle (§5 "Ghost/icon buttons")
+  catalog panel box-shadow ad hoc -> --shadow-float (the one elevation
+                token, §4)
+
+4. ECharts theming (DESIGN.md §2)
+-----------------------------------
+Added a fixed 5-color categorical palette, assigned by first-seen entity
+order (never by rank/value, never recycled per filter):
+  CHART_PALETTE = ["#2F9E63","#3D72C0","#CE7A1A","#8B55C9","#C24E2A"]
+Single-series charts (9 of the 12 registered metrics + funnel + pie + line)
+use CHART_PALETTE[0] uniformly, matching "brand anchor, first series
+always." The 3 metrics carrying a `series` field in metrics.yaml
+(pairing_rate_by_platform_market -> platform, attribution_first_vs_last ->
+attribution_model, completion_by_channel_device -> device_category) assign
+PALETTE[i] per distinct series value in first-seen order and turn legend
+on (text --ink-soft); every other chart has no legend (title names it).
+Also added: axis/grid lines colored --border, axis labels --ink-muted,
+bar borderRadius [4,4,0,0] (funnel's horizontal bars [0,4,4,0], rounded on
+the data end), a 2px "gap" between adjacent bar/pie-slice fills via an
+itemStyle borderColor=--surface/borderWidth=2 trick, tabular-nums kept on
+all DOM-rendered numbers (stat tiles, latency/step-secs badges), and a
+CHART_SEQUENTIAL_RAMP constant (#E7F0EA -> #9CCDB0 -> #468254 -> #154734)
+defined but unused, reserved for a future heat/magnitude chart per §2.
+
+5. Footer disclaimer (DESIGN.md §0)
+--------------------------------------
+Added the mandatory line, in both languages, alongside the existing
+driver/LLM/tier line (kept verbatim):
+  EN: "Independent case-study demo · synthetic data · not affiliated with
+       Sonova or Phonak."
+  TR: "Bağımsız vaka çalışması demosu · sentetik veri · Sonova veya Phonak
+       ile bağlantılı değildir."
+New i18n key `footerDisclaimer` added to both `I18N.en` and `I18N.tr`; no
+existing i18n key was renamed. The footer element was split into two
+<span>s (#footer-status keeps the old id's JS wiring under a new id,
+`.footer-disclaimer` is new and static per language) — this is a DOM
+addition, not a restructuring of anything else on the page.
+
+6. Regression caught and fixed: mobile layout
+------------------------------------------------
+The new second footer line adds height to the footer on narrow viewports,
+which — stacked with the pre-existing `.chat-panel{max-height:60vh}` mobile
+rule — squeezed `.dash-panel` down to ~8px, pushing the dashboard toolbar
+("Build top-12 KPI dashboard" button) underneath the footer and making it
+unclickable (confirmed via a failed Playwright click before the fix, and
+via bounding-box measurements). Fixed with two small, targeted rules in the
+existing `@media (max-width:900px)` block: chat-panel cap lowered to 52vh,
+and `.dash-panel{min-height:220px}` added so the toolbar always has room;
+if total content still exceeds the viewport the page now scrolls as a
+whole rather than clipping anything. Verified post-fix: button sits at
+y=714-754px, footer starts at y=769px, no overlap; full mobile welcome and
+mobile dashboard screenshots (f1/f2) confirm no visual regression.
+
+7. Screenshots (reports/m9_*.png), all eyeballed
+------------------------------------------------
+  m9_a_welcome.png              - welcome screen (desktop, 1440x900)
+  m9_b_answer_sql_data.png      - chat answer, highlighted SQL open, Show
+                                   data table open
+  m9_b2_trace_expanded.png      - bonus: the same answer's collapsed trace
+                                   re-expanded, showing the retry badge
+                                   (warn tokens) and per-step icons/timing
+  m9_c_dashboard_grid.png       - top-12 dashboard, first 4 cards
+  m9_c2_dashboard_mid.png       - bonus: scrolled further (multi-series
+                                   "Pairing rate by platform and market"
+                                   with legend, single-series line trend)
+  m9_c3_dashboard_bottom.png    - bonus: last cards, both remaining multi-
+                                   series charts (attribution 2-series,
+                                   channel x device 3-series) with legends
+                                   in full green->blue->amber palette order
+  m9_d_catalog_drawer.png       - data catalog drawer open (bronze/silver/
+                                   gold groups in --accent-mid)
+  m9_e_turkish.png              - TR language, full UI incl. footer
+                                   disclaimer translation
+  m9_f1_mobile_welcome.png      - 390px width, welcome screen
+  m9_f2_mobile_dashboard.png    - 390px width, dashboard after build,
+                                   confirms the mobile layout fix (#6)
+  m9_g_focus_ring.png           - bonus: :focus-visible 2px --accent ring
+                                   with offset on the Ask button
+  m9_h_chip_hover.png           - bonus: chip hover / remove-affordance
+
+Eyeball checklist (all clean):
+  - Lime (--action) used only as a fill, only on the two primary-action
+    buttons (Ask / Build dashboard), one per region — never as text or a
+    thin stroke on white.
+  - No grey-on-grey text: agent bubbles are --surface+border (not the old
+    flat grey fill), body text is --ink, secondary/muted text is --ink-
+    soft/--ink-muted, both well above AA on white/--surface-alt.
+  - Chart palette order is green-first everywhere multi-series legends
+    appear (Android/iOS; first_touch/last_touch; desktop/mobile/tablet).
+  - No label collisions found in any chart at 1440px or 390px widths.
+  - Focus-visible and hover states (chip remove, chart-type/close icon
+    circles, chip background) all render as designed; zero console errors
+    during interactive smoke tests (chart-type switch, card close, catalog
+    insert-into-input all still work — see below).
+
+8. Functional smoke test (beyond pytest)
+-------------------------------------------
+Pytest doesn't exercise app/static/index.html's JS, so the following were
+checked live via Playwright against the running app (no DOM structure or
+class names were renamed anywhere, only new CSS rules/values and the one
+footer <span> split, so this was mainly a confirmation pass):
+  - Dashboard build -> 12 cards render.
+  - Chart-type switch icon button -> re-renders the chart, no console
+    errors.
+  - Card close button -> card count 12 -> 11, persisted-closed state
+    write not affected (same JS path, untouched).
+  - Catalog drawer open -> click a table name -> inserted into the
+    question input at the cursor (same as before).
+  - Zero console errors across the whole run.
+
+9. DESIGN.md ambiguities resolved (and how)
+-----------------------------------------------
+  1. Brand <h1> font: §3's display-role list enumerates "welcome title,
+     hero/stat numbers, card titles, section headers" — the page's own
+     brand lockup ("Phonak Funnel Copilot — ...") isn't named. Kept it in
+     Inter 700 rather than Fraunces, both because it's not on the list and
+     because §0 already warns against anything that reads as a copied
+     wordmark/logo treatment.
+  2. No "--danger-soft" token exists in §1 for the error-message bubble
+     background. Derived a light, bordered danger tint (#FBEAE7, paired
+     with a 1px --danger border) rather than a flat fill, consistent with
+     the "flat by default, hairline border" elevation rule in §4.
+  3. hljs token roles beyond keyword/string/number/comment (built_in/type,
+     operator/punctuation, variable/title/attr) aren't specified in §5.
+     Kept them inside the same dark-surface green family (mid-green,
+     grey-green, light neutral) rather than reintroducing the old teal, so
+     the block still reads as one palette.
+  4. Pie charts: §2 says "legend present for >=2 series, none for single
+     series." A pie is always one echarts series regardless of slice
+     count. Read literally: no legend on pie charts, relying on the
+     existing per-slice on-chart name labels (which were already being
+     rendered) to identify slices instead — this removed the old
+     always-on bottom legend on the "pie" chart-type option (still
+     available via each card's chart-type switcher).
+  5. Segmented-control radius: §4 lists 4 explicit radius buckets (buttons/
+     chips 8, inputs 10, cards/panels 16, pills 999) but doesn't name the
+     tier/language toggle "capsule" container. Left it as a 999px pill
+     container (as it already was) since it visually functions like the
+     existing badge/citation-chip pills, not a standalone button.
+  6. "2px gaps between adjacent fills... via barCategoryGap/borderWidth
+     trick" — implemented as itemStyle.borderColor = --surface (white) +
+     borderWidth: 2 on every bar/pie-slice fill, which reads as a gap
+     against the card's white background while preserving the rounded-
+     corner geometry; barGap/barCategoryGap's percentage-of-bar-width units
+     don't give an exact pixel value, so the border trick was used as the
+     spec names it.
+  7. Table row hover "--accent-soft at 40%": implemented literally as
+     rgba(231,240,234,.4) — a very subtle wash over white, consistent with
+     the flat/hairline aesthetic the rest of §4/§5 calls for.
+
+10. Deviations from the letter of DESIGN.md (documented, not silent)
+------------------------------------------------------------------------
+  - Chart axis/tooltip label text is drawn by ECharts on <canvas>, which
+    does not support the CSS `font-variant-numeric: tabular-nums`
+    property inside a canvas 2D font string in any browser. Tabular nums
+    are applied everywhere they can actually take effect — stat tiles,
+    latency badges, step-secs badges (all real DOM text) — but chart-axis
+    numerals use the browser's default numeral rendering.
+  - The `.woff` fallback files that ship alongside each fontsource woff2
+    were intentionally not copied (task said "obtain ... woff2"; woff2 is
+    universally supported by the target browsers/Playwright chromium), so
+    there is no non-woff2 fallback format — only the system-stack font
+    fallback described in §3 if the woff2 fails to load for some reason.
